@@ -67,15 +67,12 @@ async function markAsRead(messageId) {
   }
 }
 
-async function showTyping(to) {
+async function showTyping(incomingMessageId) {
   try {
     await makeClient().post('/messages', {
       messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: to.replace('+', ''),
-      type: 'reaction',
-      // Cloud API typing indicator
-      typing: { status: 'typing' },
+      status: 'typing',
+      message_id: incomingMessageId,
     });
   } catch {
     // Typing indicator is best-effort — never block message delivery

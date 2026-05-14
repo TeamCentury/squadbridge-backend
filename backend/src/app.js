@@ -25,6 +25,9 @@ const path = require('path');
 
 const app = express();
 
+// Trust Azure App Service / load balancer headers (fixes express-rate-limit X-Forwarded-For error)
+app.set('trust proxy', 1);
+
 // Security & parsing
 app.use(helmet());
 app.use(cors({ origin: process.env.FRONTEND_URL || '*', credentials: true }));

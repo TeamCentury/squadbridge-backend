@@ -202,7 +202,7 @@ router.post('/whatsapp', async (req, res) => {
 
     // Show read receipt + typing bubble while Claude thinks
     await whatsappService.markAsRead(message.id);
-    await whatsappService.showTyping(senderPhone);
+    await whatsappService.showTyping(message.id);
 
     const school = await School.findOne({ where: { phone: senderPhone } });
     const schoolContext = school
@@ -214,7 +214,7 @@ router.post('/whatsapp', async (req, res) => {
 
     logger.info({ event: 'whatsapp_chat', from: senderPhone, school: school?.name });
   } catch (err) {
-    logger.error({ event: 'whatsapp_webhook_error', error: err.message });
+    logger.error(`whatsapp_webhook_error: ${err.message}`, { stack: err.stack, response: err.response?.data });
   }
 });
 
