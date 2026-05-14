@@ -21,6 +21,8 @@ const ussdRoutes = require('./routes/ussd');
 const voiceRoutes = require('./routes/voice');
 const auditRoutes = require('./routes/auditLog');
 
+const path = require('path');
+
 const app = express();
 
 // Security & parsing
@@ -88,6 +90,12 @@ app.use('/api/docs',
 
 // Serve raw OpenAPI JSON spec
 app.get('/api/docs.json', (req, res) => res.json(swaggerSpec));
+
+// Privacy policy (required by Meta WhatsApp Business API)
+app.get('/privacy', (req, res) => {
+  res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'unsafe-inline';");
+  res.sendFile(path.join(__dirname, 'public', 'privacy.html'));
+});
 
 // Public routes
 app.use('/api/v1/auth', authRoutes);
