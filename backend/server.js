@@ -29,22 +29,23 @@ io.on('connection', (socket) => {
 });
 
 async function start() {
+  // Always start the HTTP server so /health and /api/docs are reachable
+  server.listen(PORT, () => {
+    logger.info(`SquadBridge API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
+    logger.info(`Swagger UI: http://localhost:${PORT}/api/docs`);
+  });
+
+  // Connect to DB — warn but don't crash if credentials are placeholder
   try {
     await sequelize.authenticate();
     logger.info('Database connection established');
 
-    // Sync tables in development; use migrations in production
     if (process.env.NODE_ENV !== 'production') {
       await sequelize.sync({ alter: true });
       logger.info('Database synced');
     }
-
-    server.listen(PORT, () => {
-      logger.info(`SquadBridge API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
-    });
   } catch (err) {
-    logger.error({ message: 'Failed to start server', error: err.message });
-    process.exit(1);
+    logger.warn(`Database unavailable: ${err.message} — API routes requiring DB will return 500 until connected`);
   }
 }
 

@@ -3,7 +3,89 @@ const { body, validationResult } = require('express-validator');
 const { School, Student, AuditLog } = require('../models');
 const squadService = require('../services/squadService');
 
-// POST /api/v1/schools/:id/payment-links
+/**
+ * @swagger
+ * /api/v1/schools/{id}/payment-links:
+ *   post:
+ *     summary: Bulk-generate Squad payment links for students
+ *     description: |
+ *       Calls Squad Payment Links API for each student and stores the
+ *       link-to-student mapping. Supports 150+ students via internal batching.
+ *     tags: [Collections]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: School UUID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [students, term]
+ *             properties:
+ *               term:
+ *                 type: string
+ *                 example: "Term 1 2026"
+ *               academic_year:
+ *                 type: string
+ *                 example: "2025/2026"
+ *               students:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   required: [name, fee_amount]
+ *                   properties:
+ *                     name:
+ *                       type: string
+ *                       example: Adaeze Obi
+ *                     class:
+ *                       type: string
+ *                       example: JSS 3
+ *                     fee_amount:
+ *                       type: number
+ *                       example: 65000
+ *                     parent_phone:
+ *                       type: string
+ *                       example: "+2348098765432"
+ *     responses:
+ *       201:
+ *         description: Links generated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 generated:
+ *                   type: integer
+ *                   example: 150
+ *                 links:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       student_id:
+ *                         type: string
+ *                         format: uuid
+ *                       name:
+ *                         type: string
+ *                       payment_url:
+ *                         type: string
+ *                         format: uri
+ *                       amount:
+ *                         type: number
+ *                       status:
+ *                         type: string
+ *                         example: pending
+ *       400:
+ *         description: Validation error
+ *       404:
+ *         description: School not found
+ */
 router.post('/', [
   body('students').isArray({ min: 1 }).withMessage('Students array required'),
   body('students.*.name').notEmpty(),
@@ -18,7 +100,6 @@ router.post('/', [
     if (!school) return res.status(404).json({ error: 'School not found' });
 
     const { students, term, academic_year } = req.body;
-
     const results = [];
     const BATCH_SIZE = 10;
 
@@ -73,7 +154,40 @@ router.post('/', [
   }
 });
 
-// GET /api/v1/schools/:id/students — list students with payment status
+/**
+ * @swagger
+ * /api/v1/schools/{id}/payment-links/students:
+ *   get:
+ *     summary: List students with payment status
+ *     tags: [Collections]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [unpaid, partial, paid]
+ *         description: Filter by payment status
+ *       - in: query
+ *         name: term
+ *         schema:
+ *           type: string
+ *         example: "Term 1 2026"
+ *     responses:
+ *       200:
+ *         description: List of students
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/Student'
+ */
 router.get('/students', async (req, res, next) => {
   try {
     const { status, term } = req.query;

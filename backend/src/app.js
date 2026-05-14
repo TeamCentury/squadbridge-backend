@@ -4,6 +4,8 @@ const helmet = require('helmet');
 const cors = require('cors');
 const morgan = require('morgan');
 const compression = require('compression');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./config/swagger');
 
 const { rateLimiter, webhookLimiter } = require('./middleware/rateLimiter');
 const authMiddleware = require('./middleware/auth');
@@ -40,8 +42,52 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api', rateLimiter);
 app.use('/webhooks', webhookLimiter);
 
-// Health check (no auth)
+/**
+ * @swagger
+ * /health:
+ *   get:
+ *     summary: Health check
+ *     tags: [Health]
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: Server is healthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: ok
+ *                 timestamp:
+ *                   type: string
+ *                   format: date-time
+ */
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+
+// Swagger UI — disable helmet's CSP for this route only
+app.use('/api/docs',
+  (req, res, next) => {
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;");
+    next();
+  },
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec, {
+    customSiteTitle: 'SquadBridge API Docs',
+    customCss: '.swagger-ui .topbar { background-color: #1F4E79; } .swagger-ui .topbar-wrapper img { content: url("data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 30\'><text y=\'22\' font-size=\'18\' fill=\'white\' font-family=\'Inter,sans-serif\' font-weight=\'700\'>SquadBridge</text></svg>"); }',
+    swaggerOptions: {
+      persistAuthorization: true,
+      displayRequestDuration: true,
+      docExpansion: 'list',
+      filter: true,
+      tryItOutEnabled: true,
+    },
+  })
+);
+
+// Serve raw OpenAPI JSON spec
+app.get('/api/docs.json', (req, res) => res.json(swaggerSpec));
 
 // Public routes
 app.use('/api/v1/auth', authRoutes);

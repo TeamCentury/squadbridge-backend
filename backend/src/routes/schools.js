@@ -6,7 +6,89 @@ const squadService = require('../services/squadService');
 const whatsappService = require('../services/whatsappService');
 const { AuditLog } = require('../models');
 
-// POST /api/v1/schools/onboard
+/**
+ * @swagger
+ * /api/v1/schools/onboard:
+ *   post:
+ *     summary: Onboard a new school
+ *     description: |
+ *       Validates BVN via Squad KYC, provisions a Squad Virtual Account (NUBAN),
+ *       saves the school record, and sends a WhatsApp welcome notification.
+ *     tags: [Schools]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name, phone, bvn, state, lga, student_count, fee_per_term, staff_count, avg_salary, password]
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 example: Sunrise Academy
+ *               phone:
+ *                 type: string
+ *                 example: "+2348012345678"
+ *               bvn:
+ *                 type: string
+ *                 example: "12345678901"
+ *                 description: 11-digit BVN — used for KYC only, never stored
+ *               state:
+ *                 type: string
+ *                 example: Lagos
+ *               lga:
+ *                 type: string
+ *                 example: Ikeja
+ *               address:
+ *                 type: string
+ *                 example: 14 School Road, Ikeja
+ *               student_count:
+ *                 type: integer
+ *                 example: 150
+ *               fee_per_term:
+ *                 type: number
+ *                 example: 65000
+ *               staff_count:
+ *                 type: integer
+ *                 example: 20
+ *               avg_salary:
+ *                 type: number
+ *                 example: 85000
+ *               password:
+ *                 type: string
+ *                 minLength: 6
+ *                 example: securepass123
+ *     responses:
+ *       201:
+ *         description: School onboarded successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 school_id:
+ *                   type: string
+ *                   format: uuid
+ *                 nuban:
+ *                   type: string
+ *                   example: "0123456789"
+ *                 status:
+ *                   type: string
+ *                   example: onboarded
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       422:
+ *         description: BVN verification failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post('/onboard', [
   body('name').trim().notEmpty(),
   body('phone').matches(/^\+?234[0-9]{10}$/).withMessage('Valid Nigerian phone required'),
@@ -25,7 +107,6 @@ router.post('/onboard', [
 
     const { name, phone, bvn, state, lga, address, student_count, fee_per_term, staff_count, avg_salary, password } = req.body;
 
-    // KYC via Squad Sub-merchant API
     let merchantData;
     try {
       merchantData = await squadService.createSubMerchant({ display_name: name, bvn, phone_number: phone });
@@ -33,7 +114,6 @@ router.post('/onboard', [
       return res.status(422).json({ error: 'Identity verification failed. Please check your BVN.' });
     }
 
-    // Create Squad Virtual Account
     const vaRes = await squadService.createVirtualAccount({
       customer_identifier: phone,
       display_name: name,
@@ -44,20 +124,9 @@ router.post('/onboard', [
     const password_hash = await bcrypt.hash(password, 12);
 
     const school = await School.create({
-      name,
-      phone,
-      state,
-      lga,
-      address,
-      student_count,
-      fee_per_term,
-      staff_count,
-      avg_salary,
-      nuban,
-      squad_merchant_id: merchantData?.data?.merchant_id,
-      bvn_verified: true,
-      onboarding_status: 'onboarded',
-      password_hash,
+      name, phone, state, lga, address, student_count, fee_per_term, staff_count, avg_salary,
+      nuban, squad_merchant_id: merchantData?.data?.merchant_id,
+      bvn_verified: true, onboarding_status: 'onboarded', password_hash,
     });
 
     await AuditLog.create({ school_id: school.id, event_type: 'ONBOARDED', description: `${name} onboarded successfully` });
@@ -69,7 +138,34 @@ router.post('/onboard', [
   }
 });
 
-// GET /api/v1/schools/:id
+/**
+ * @swagger
+ * /api/v1/schools/{id}:
+ *   get:
+ *     summary: Get school profile
+ *     tags: [Schools]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: School UUID
+ *     responses:
+ *       200:
+ *         description: School profile
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/School'
+ *       404:
+ *         description: School not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.get('/:id', [param('id').isUUID()], async (req, res, next) => {
   try {
     const school = await School.findByPk(req.params.id, {
@@ -82,7 +178,32 @@ router.get('/:id', [param('id').isUUID()], async (req, res, next) => {
   }
 });
 
-// GET /api/v1/schools/:id/pl
+/**
+ * @swagger
+ * /api/v1/schools/{id}/pl:
+ *   get:
+ *     summary: Get auto-generated P&L for a school
+ *     description: |
+ *       Calculates annual income, all expense categories, net position,
+ *       and an actionable recommendation if in deficit.
+ *     tags: [Schools]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: P&L breakdown
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/PL'
+ *       404:
+ *         description: School not found
+ */
 router.get('/:id/pl', async (req, res, next) => {
   try {
     const school = await School.findByPk(req.params.id);
@@ -112,7 +233,54 @@ router.get('/:id/pl', async (req, res, next) => {
   }
 });
 
-// GET /api/v1/schools/:id/dashboard
+/**
+ * @swagger
+ * /api/v1/schools/{id}/dashboard:
+ *   get:
+ *     summary: Get aggregated dashboard data
+ *     description: |
+ *       Returns live Squad balance, collection totals, recent transactions,
+ *       and the latest cash flow forecast in one call.
+ *     tags: [Schools]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Dashboard aggregated data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 balance:
+ *                   type: number
+ *                   example: 4700000
+ *                 total_collected:
+ *                   type: number
+ *                   example: 4680000
+ *                 total_expected:
+ *                   type: number
+ *                   example: 9750000
+ *                 students_paid:
+ *                   type: integer
+ *                   example: 72
+ *                 total_students:
+ *                   type: integer
+ *                   example: 150
+ *                 recent_transactions:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Transaction'
+ *                 forecast:
+ *                   $ref: '#/components/schemas/Forecast'
+ *       404:
+ *         description: School not found
+ */
 router.get('/:id/dashboard', async (req, res, next) => {
   try {
     const school = await School.findByPk(req.params.id);

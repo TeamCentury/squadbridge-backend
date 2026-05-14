@@ -5,9 +5,60 @@ const { Student, Transaction, School, AuditLog } = require('../models');
 const whatsappService = require('../services/whatsappService');
 const logger = require('../config/logger');
 
-// POST /webhooks/squad/payment
+/**
+ * @swagger
+ * /webhooks/squad/payment:
+ *   post:
+ *     summary: Squad payment webhook receiver
+ *     description: |
+ *       **Called by Squad — not by your frontend.**
+ *
+ *       Processes incoming payment events:
+ *       1. Verifies HMAC-SHA256 signature in `x-squad-signature` header
+ *       2. Deduplicates via Redis (24hr TTL on `transaction_id`)
+ *       3. Updates student fee status and school collected amount
+ *       4. Emits Socket.io `payment_received` event to connected dashboard clients
+ *       5. Sends WhatsApp notification to school bursar
+ *
+ *       Always responds **HTTP 202** immediately; processing is async.
+ *     tags: [Webhooks]
+ *     security: []
+ *     parameters:
+ *       - in: header
+ *         name: x-squad-signature
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: HMAC-SHA256 of the raw request body signed with your webhook secret
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               data:
+ *                 type: object
+ *                 properties:
+ *                   transaction_ref:
+ *                     type: string
+ *                   transaction_amount:
+ *                     type: number
+ *                   transaction_status:
+ *                     type: string
+ *                     example: successful
+ *                   payment_link_ref:
+ *                     type: string
+ *                   payment_type:
+ *                     type: string
+ *                     example: card
+ *     responses:
+ *       202:
+ *         description: Accepted — processing asynchronously
+ *       401:
+ *         description: Invalid or missing Squad signature
+ */
 router.post('/squad/payment', validateSquadSig, async (req, res) => {
-  // Respond immediately to Squad — processing is async
   res.status(202).json({ status: 'accepted' });
 
   const payload = req.body;
@@ -18,12 +69,9 @@ router.post('/squad/payment', validateSquadSig, async (req, res) => {
   }
 
   try {
-    // Idempotency check: skip if already processed
     const dedupeKey = `webhook:${txId}`;
     const already = await redis.get(dedupeKey);
-    if (already) {
-      return logger.info({ event: 'webhook_duplicate', txId });
-    }
+    if (already) return logger.info({ event: 'webhook_duplicate', txId });
     await redis.set(dedupeKey, '1', 'EX', 86400);
 
     const amount = parseFloat(payload?.data?.transaction_amount || payload?.amount || 0);
@@ -34,13 +82,11 @@ router.post('/squad/payment', validateSquadSig, async (req, res) => {
       return logger.info({ event: 'webhook_non_success', status, txId });
     }
 
-    // Find the student by payment link
     const student = linkId
       ? await Student.findOne({ where: { payment_link_id: linkId } })
       : null;
 
-    // Record transaction
-    const tx = await Transaction.create({
+    await Transaction.create({
       school_id: student?.school_id,
       student_id: student?.id,
       squad_transaction_id: txId,
@@ -52,7 +98,6 @@ router.post('/squad/payment', validateSquadSig, async (req, res) => {
       squad_payload: JSON.stringify(payload),
     });
 
-    // Update student payment status
     if (student) {
       const newPaid = parseFloat(student.amount_paid) + amount;
       const newStatus = newPaid >= parseFloat(student.fee_amount) ? 'paid'
@@ -60,7 +105,6 @@ router.post('/squad/payment', validateSquadSig, async (req, res) => {
       await student.update({ amount_paid: newPaid, fee_status: newStatus });
     }
 
-    // Audit
     if (student?.school_id) {
       await AuditLog.create({
         school_id: student.school_id,
@@ -70,7 +114,6 @@ router.post('/squad/payment', validateSquadSig, async (req, res) => {
         description: `Payment received from ${student?.name || 'unknown'}`,
       });
 
-      // Real-time dashboard push via Socket.io
       const io = req.app.get('io');
       if (io) {
         const school = await School.findByPk(student.school_id);
@@ -79,15 +122,10 @@ router.post('/squad/payment', validateSquadSig, async (req, res) => {
         const paidCount = allStudents.filter((st) => st.fee_status === 'paid').length;
 
         io.to(`school:${student.school_id}`).emit('payment_received', {
-          transaction_id: txId,
-          student_name: student.name,
-          amount,
-          total_collected: totalCollected,
-          students_paid: paidCount,
-          total_students: allStudents.length,
+          transaction_id: txId, student_name: student.name, amount,
+          total_collected: totalCollected, students_paid: paidCount, total_students: allStudents.length,
         });
 
-        // WhatsApp notification
         if (school) {
           await whatsappService.notifyPaymentReceived(school.phone, amount, student.name, totalCollected);
         }

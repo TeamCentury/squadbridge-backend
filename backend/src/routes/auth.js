@@ -4,6 +4,57 @@ const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const { School } = require('../models');
 
+/**
+ * @swagger
+ * /api/v1/auth/login:
+ *   post:
+ *     summary: Login and obtain a JWT token
+ *     tags: [Auth]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [phone, password]
+ *             properties:
+ *               phone:
+ *                 type: string
+ *                 example: "+2348012345678"
+ *               password:
+ *                 type: string
+ *                 example: "securepassword"
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 token:
+ *                   type: string
+ *                   description: JWT Bearer token — include in all subsequent requests
+ *                 school_id:
+ *                   type: string
+ *                   format: uuid
+ *                 name:
+ *                   type: string
+ *                   example: Sunrise Academy
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       401:
+ *         description: Invalid credentials
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post('/login', [
   body('phone').notEmpty().withMessage('Phone is required'),
   body('password').notEmpty().withMessage('Password is required'),
