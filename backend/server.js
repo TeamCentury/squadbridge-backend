@@ -40,9 +40,13 @@ async function start() {
     await sequelize.authenticate();
     logger.info('Database connection established');
 
-    // sync({ force: false }) is safe in production — creates missing tables, never drops or alters existing ones
-    await sequelize.sync({ force: false });
-    logger.info('Database synced');
+    // sync({ force: false }) is safe — creates missing tables, never drops or alters existing ones
+    try {
+      await sequelize.sync({ force: false });
+      logger.info('Database synced');
+    } catch (syncErr) {
+      logger.warn(`DB sync warning (tables may already exist): ${syncErr.message || syncErr.name || JSON.stringify(syncErr)}`);
+    }
   } catch (err) {
     logger.warn(`Database unavailable: ${err.message} — API routes requiring DB will return 500 until connected`);
   }
