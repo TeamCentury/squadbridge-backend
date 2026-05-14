@@ -40,10 +40,9 @@ async function start() {
     await sequelize.authenticate();
     logger.info('Database connection established');
 
-    if (process.env.NODE_ENV !== 'production') {
-      await sequelize.sync({ alter: true });
-      logger.info('Database synced');
-    }
+    // sync({ force: false }) is safe in production — creates missing tables, never drops or alters existing ones
+    await sequelize.sync({ force: false });
+    logger.info('Database synced');
   } catch (err) {
     logger.warn(`Database unavailable: ${err.message} — API routes requiring DB will return 500 until connected`);
   }
