@@ -5,6 +5,7 @@ const { School, Student, Transaction, Forecast } = require('../models');
 const squadService = require('../services/squadService');
 const whatsappService = require('../services/whatsappService');
 const { AuditLog } = require('../models');
+const { generatePLRecommendation } = require('../services/claudeService');
 
 /**
  * @swagger
@@ -223,9 +224,8 @@ router.get('/:id/pl', async (req, res, next) => {
     const total_expenses = salary_expense + transport_estimate + feeding_estimate + utilities_estimate + maintenance_estimate;
     const net_position = annual_income - total_expenses;
 
-    const recommendation = net_position < 0
-      ? `Consider increasing fees to ₦${Math.ceil((total_expenses / (s * 3)) / 1000) * 1000 + 5000} or increasing enrolment by ${Math.ceil(-net_position / (f * 3))} students`
-      : null;
+    const plData = { annual_income, total_expenses, net_position, salary_expense, student_count: s, fee_per_term: f, staff_count: sc };
+    const recommendation = await generatePLRecommendation(plData, school.name).catch(() => null);
 
     res.json({ annual_income, salary_expense, transport_estimate, feeding_estimate, utilities_estimate, maintenance_estimate, total_expenses, net_position, recommendation });
   } catch (err) {

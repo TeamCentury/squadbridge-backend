@@ -3,6 +3,7 @@ const validateSquadSig = require('../middleware/validateSquadSig');
 const redis = require('../config/redis');
 const { Student, Transaction, School, AuditLog } = require('../models');
 const whatsappService = require('../services/whatsappService');
+const { handleWhatsAppChat } = require('../services/claudeService');
 const logger = require('../config/logger');
 
 /**
@@ -135,6 +136,81 @@ router.post('/squad/payment', validateSquadSig, async (req, res) => {
     logger.info({ event: 'webhook_processed', txId, amount, student: student?.name });
   } catch (err) {
     logger.error({ event: 'webhook_processing_error', txId, error: err.message });
+  }
+});
+
+/**
+ * @swagger
+ * /webhooks/whatsapp:
+ *   get:
+ *     summary: WhatsApp webhook verification
+ *     description: Meta Cloud API verification handshake — returns hub.challenge if token matches.
+ *     tags: [Webhooks]
+ *     security: []
+ *     parameters:
+ *       - in: query
+ *         name: hub.mode
+ *         schema: { type: string }
+ *       - in: query
+ *         name: hub.verify_token
+ *         schema: { type: string }
+ *       - in: query
+ *         name: hub.challenge
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Verification challenge echoed back
+ *       403:
+ *         description: Token mismatch
+ */
+router.get('/whatsapp', (req, res) => {
+  const { 'hub.mode': mode, 'hub.verify_token': token, 'hub.challenge': challenge } = req.query;
+  if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+  res.sendStatus(403);
+});
+
+/**
+ * @swagger
+ * /webhooks/whatsapp:
+ *   post:
+ *     summary: Incoming WhatsApp messages
+ *     description: |
+ *       Receives messages from WhatsApp Business API. Looks up the school by sender phone number
+ *       and uses Claude AI to generate a contextual reply.
+ *     tags: [Webhooks]
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: Message processed
+ */
+router.post('/whatsapp', async (req, res) => {
+  res.sendStatus(200);
+
+  try {
+    const entry = req.body?.entry?.[0];
+    const change = entry?.changes?.[0];
+    const message = change?.value?.messages?.[0];
+
+    if (!message || message.type !== 'text') return;
+
+    const senderPhone = `+${message.from}`;
+    const userText = message.text?.body;
+
+    if (!userText) return;
+
+    const school = await School.findOne({ where: { phone: senderPhone } });
+    const schoolContext = school
+      ? { name: school.name, student_count: school.student_count, fee_per_term: school.fee_per_term, balance: 0 }
+      : null;
+
+    const reply = await handleWhatsAppChat(userText, schoolContext);
+    await whatsappService.sendText(senderPhone, reply);
+
+    logger.info({ event: 'whatsapp_chat', from: senderPhone, school: school?.name });
+  } catch (err) {
+    logger.error({ event: 'whatsapp_webhook_error', error: err.message });
   }
 });
 

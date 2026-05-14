@@ -1,7 +1,8 @@
 const router = require('express').Router({ mergeParams: true });
-const { School, Forecast } = require('../models');
+const { School, Forecast, PayrollConfig } = require('../models');
 const squadService = require('../services/squadService');
 const { computeForecast } = require('../services/forecastService');
+const { explainForecast } = require('../services/claudeService');
 
 /**
  * @swagger
@@ -79,6 +80,65 @@ router.post('/refresh', async (req, res, next) => {
 
     const forecast = await computeForecast(school.id, currentBalance);
     res.json(forecast);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/schools/{id}/forecast/explain:
+ *   get:
+ *     summary: AI-generated plain-English explanation of the latest forecast
+ *     description: |
+ *       Uses Claude to translate the 30/60/90-day projection into plain language
+ *       with actionable recommendations for the school operator.
+ *     tags: [Forecast]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: AI explanation and recommendations
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 forecast_id:
+ *                   type: string
+ *                 explanation:
+ *                   type: string
+ *                 generated_at:
+ *                   type: string
+ *                   format: date-time
+ *       404:
+ *         description: No forecast available yet
+ */
+router.get('/explain', async (req, res, next) => {
+  try {
+    const [school, forecast] = await Promise.all([
+      School.findByPk(req.params.id),
+      Forecast.findOne({ where: { school_id: req.params.id }, order: [['generated_at', 'DESC']] }),
+    ]);
+
+    if (!school) return res.status(404).json({ error: 'School not found' });
+    if (!forecast) return res.status(404).json({ error: 'No forecast available yet. Run /refresh first.' });
+
+    const payrollConfig = await PayrollConfig.findOne({ where: { school_id: school.id, status: 'active' } });
+    const monthlyPayroll = payrollConfig ? parseFloat(payrollConfig.total_amount) : 0;
+
+    const explanation = await explainForecast(forecast, school.name, monthlyPayroll);
+
+    res.json({
+      forecast_id: forecast.id,
+      explanation: explanation || 'AI explanation temporarily unavailable.',
+      generated_at: forecast.generated_at,
+    });
   } catch (err) {
     next(err);
   }
