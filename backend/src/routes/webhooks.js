@@ -1,9 +1,9 @@
 const router = require('express').Router();
 const validateSquadSig = require('../middleware/validateSquadSig');
 const redis = require('../config/redis');
-const { Student, Transaction, School, AuditLog } = require('../models');
+const { Student, Transaction, School, Forecast, AuditLog } = require('../models');
 const whatsappService = require('../services/whatsappService');
-const { handleWhatsAppChat } = require('../services/claudeService');
+const { handleWhatsAppChat, explainForecast } = require('../services/claudeService');
 const logger = require('../config/logger');
 
 /**
@@ -185,6 +185,106 @@ router.get('/whatsapp', (req, res) => {
  *       200:
  *         description: Message processed
  */
+const GREETINGS = ['hi', 'hello', 'hey', 'menu', 'start', 'help', 'helo', 'hai'];
+const MAIN_MENU_BUTTONS = [
+  { id: 'btn_forecast', title: 'Cash Flow Forecast' },
+  { id: 'btn_pl',       title: 'P&L Report' },
+  { id: 'btn_fees',     title: 'Fee Collections' },
+];
+const FOLLOWUP_BUTTONS = [
+  { id: 'btn_menu',     title: 'Main Menu' },
+  { id: 'btn_ask',      title: 'Ask a Question' },
+];
+
+async function sendMainMenu(phone, school) {
+  const name = school?.name || 'there';
+  await whatsappService.sendButtons(
+    phone,
+    `Hi ${name}! 👋 Welcome to *SquadBridge*.\n\nI can give you live financial data about your school. What would you like to check?`,
+    MAIN_MENU_BUTTONS
+  );
+}
+
+async function handleButtonAction(buttonId, phone, school) {
+  if (buttonId === 'btn_menu' || buttonId === 'btn_ask') {
+    return sendMainMenu(phone, school);
+  }
+
+  if (!school) {
+    await whatsappService.sendButtons(
+      phone,
+      'Your phone number is not linked to a SquadBridge school. Please onboard at squadbridge.com or contact support.',
+      [{ id: 'btn_menu', title: 'Main Menu' }]
+    );
+    return;
+  }
+
+  if (buttonId === 'btn_forecast') {
+    const forecast = await Forecast.findOne({ where: { school_id: school.id }, order: [['generated_at', 'DESC']] });
+    if (!forecast) {
+      await whatsappService.sendButtons(
+        phone,
+        'No forecast yet — your school needs at least a few transactions first. Check back after some payments come in.',
+        [{ id: 'btn_menu', title: 'Main Menu' }]
+      );
+      return;
+    }
+    const explanation = await explainForecast(forecast, school.name, 0) || 'Forecast data retrieved.';
+    await whatsappService.sendText(phone, `📊 *Cash Flow Forecast for ${school.name}*\n\n30 days: ₦${Number(forecast.day30).toLocaleString()}\n60 days: ₦${Number(forecast.day60).toLocaleString()}\n90 days: ₦${Number(forecast.day90).toLocaleString()}\n\n${explanation}`);
+    await whatsappService.sendButtons(phone, 'What would you like to do next?', FOLLOWUP_BUTTONS);
+    return;
+  }
+
+  if (buttonId === 'btn_pl') {
+    const s = parseFloat(school.student_count);
+    const f = parseFloat(school.fee_per_term);
+    const sc = parseFloat(school.staff_count);
+    const sa = parseFloat(school.avg_salary);
+    const annual_income = f * s * 3;
+    const salary_expense = sa * sc * 12;
+    const total_expenses = salary_expense + (3000 * 0.8 * s * 12) + (2500 * 0.7 * s * 12) + (150000 * 12) + (100000 * 12);
+    const net = annual_income - total_expenses;
+    const status = net >= 0 ? `✅ Surplus of ₦${Math.abs(net).toLocaleString()}` : `⚠️ Deficit of ₦${Math.abs(net).toLocaleString()}`;
+    await whatsappService.sendText(phone, `📋 *P&L Summary — ${school.name}*\n\nAnnual Income: ₦${annual_income.toLocaleString()}\nTotal Expenses: ₦${total_expenses.toLocaleString()}\nNet Position: ${status}`);
+    await whatsappService.sendButtons(phone, 'Would you like an AI recommendation on this?', [
+      { id: 'btn_pl_ai', title: 'Get Recommendation' },
+      { id: 'btn_menu',  title: 'Main Menu' },
+    ]);
+    return;
+  }
+
+  if (buttonId === 'btn_pl_ai') {
+    const s = parseFloat(school.student_count);
+    const f = parseFloat(school.fee_per_term);
+    const sc = parseFloat(school.staff_count);
+    const sa = parseFloat(school.avg_salary);
+    const annual_income = f * s * 3;
+    const salary_expense = sa * sc * 12;
+    const total_expenses = salary_expense + (3000 * 0.8 * s * 12) + (2500 * 0.7 * s * 12) + (150000 * 12) + (100000 * 12);
+    const net_position = annual_income - total_expenses;
+    const { generatePLRecommendation } = require('../services/claudeService');
+    const rec = await generatePLRecommendation({ annual_income, total_expenses, net_position, salary_expense, student_count: s, fee_per_term: f, staff_count: sc }, school.name);
+    await whatsappService.sendText(phone, `🤖 *AI Analysis*\n\n${rec || 'Unable to generate recommendation right now.'}`);
+    await whatsappService.sendButtons(phone, 'What would you like to do next?', FOLLOWUP_BUTTONS);
+    return;
+  }
+
+  if (buttonId === 'btn_fees') {
+    const students = await Student.findAll({ where: { school_id: school.id } });
+    const paid = students.filter(s => s.fee_status === 'paid').length;
+    const partial = students.filter(s => s.fee_status === 'partial').length;
+    const unpaid = students.filter(s => s.fee_status === 'unpaid').length;
+    const totalCollected = students.reduce((sum, s) => sum + parseFloat(s.amount_paid || 0), 0);
+    const totalExpected = students.reduce((sum, s) => sum + parseFloat(s.fee_amount || 0), 0);
+    await whatsappService.sendText(
+      phone,
+      `💰 *Fee Collections — ${school.name}*\n\n✅ Fully paid: ${paid} students\n⏳ Partial: ${partial} students\n❌ Unpaid: ${unpaid} students\n\nCollected: ₦${totalCollected.toLocaleString()} of ₦${totalExpected.toLocaleString()}`
+    );
+    await whatsappService.sendButtons(phone, 'What would you like to do next?', FOLLOWUP_BUTTONS);
+    return;
+  }
+}
+
 router.post('/whatsapp', async (req, res) => {
   res.sendStatus(200);
 
@@ -193,24 +293,56 @@ router.post('/whatsapp', async (req, res) => {
     const change = entry?.changes?.[0];
     const message = change?.value?.messages?.[0];
 
-    if (!message || message.type !== 'text') return;
+    if (!message) return;
 
     const senderPhone = `+${message.from}`;
-    const userText = message.text?.body;
 
-    if (!userText) return;
-
-    // Show read receipt + typing bubble while Claude thinks
     await whatsappService.markAsRead(message.id);
     await whatsappService.showTyping(message.id);
 
+    // Extract text or button selection
+    let userText = '';
+    let buttonId = null;
+
+    if (message.type === 'text') {
+      userText = message.text?.body?.trim() || '';
+    } else if (message.type === 'interactive') {
+      const ir = message.interactive;
+      if (ir.type === 'button_reply') {
+        buttonId = ir.button_reply.id;
+        userText = ir.button_reply.title;
+      } else if (ir.type === 'list_reply') {
+        buttonId = ir.list_reply.id;
+        userText = ir.list_reply.title;
+      }
+    }
+
+    if (!userText && !buttonId) return;
+
     const school = await School.findOne({ where: { phone: senderPhone } });
+
+    // Route: greeting → main menu
+    if (GREETINGS.includes(userText.toLowerCase()) || buttonId === 'btn_menu') {
+      await sendMainMenu(senderPhone, school);
+      logger.info({ event: 'whatsapp_menu', from: senderPhone });
+      return;
+    }
+
+    // Route: button tap → dedicated handler
+    if (buttonId) {
+      await handleButtonAction(buttonId, senderPhone, school);
+      logger.info({ event: 'whatsapp_button', from: senderPhone, buttonId });
+      return;
+    }
+
+    // Route: free text → Claude
     const schoolContext = school
       ? { name: school.name, student_count: school.student_count, fee_per_term: school.fee_per_term, balance: 0 }
       : null;
 
     const reply = await handleWhatsAppChat(userText, schoolContext);
     await whatsappService.sendText(senderPhone, reply);
+    await whatsappService.sendButtons(senderPhone, 'What would you like to do next?', FOLLOWUP_BUTTONS);
 
     logger.info({ event: 'whatsapp_chat', from: senderPhone, school: school?.name });
   } catch (err) {

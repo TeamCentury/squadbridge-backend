@@ -55,6 +55,33 @@ async function sendText(to, text) {
   }
 }
 
+async function sendButtons(to, bodyText, buttons) {
+  // buttons: array of { id, title } — max 3, title max 20 chars
+  try {
+    const res = await makeClient().post('/messages', {
+      messaging_product: 'whatsapp',
+      to: to.replace('+', ''),
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        body: { text: bodyText },
+        action: {
+          buttons: buttons.slice(0, 3).map((b) => ({
+            type: 'reply',
+            reply: { id: b.id, title: b.title.slice(0, 20) },
+          })),
+        },
+      },
+    });
+    return res.data;
+  } catch (err) {
+    logger.error({ service: 'whatsapp', fn: 'sendButtons', error: err.response?.data || err.message });
+    // Fallback: plain text with options listed
+    const options = buttons.map((b, i) => `${i + 1}. ${b.title}`).join('\n');
+    await sendText(to, `${bodyText}\n\n${options}`);
+  }
+}
+
 async function markAsRead(messageId) {
   try {
     await makeClient().post('/messages', {
@@ -98,6 +125,7 @@ function notifyOnboarding(phone, nuban) {
 module.exports = {
   sendMessage,
   sendText,
+  sendButtons,
   markAsRead,
   showTyping,
   notifyPaymentReceived,
