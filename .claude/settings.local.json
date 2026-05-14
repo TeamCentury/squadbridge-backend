@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"c:\\\\Users\\\\USER\\\\Desktop\\\\Team_Century\\\\backend\\\\src\\\\routes\")",
+      "Bash(mkdir -p \"c:\\\\Users\\\\USER\\\\Desktop\\\\Team_Century\\\\backend\\\\src\\\\middleware\")",
+      "Bash(mkdir -p \"c:\\\\Users\\\\USER\\\\Desktop\\\\Team_Century\\\\backend\\\\src\\\\services\")",
+      "Bash(mkdir -p \"c:\\\\Users\\\\USER\\\\Desktop\\\\Team_Century\\\\backend\\\\src\\\\models\")",
+      "Bash(mkdir -p \"c:\\\\Users\\\\USER\\\\Desktop\\\\Team_Century\\\\backend\\\\src\\\\azure-functions\")",
+      "Bash(npm install *)",
+      "Bash(npx jest *)",
+      "Bash(node -e \"require\\('./src/app'\\)\")"
+    ]
+  }
+}
