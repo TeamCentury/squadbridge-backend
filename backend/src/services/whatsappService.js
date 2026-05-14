@@ -55,6 +55,33 @@ async function sendText(to, text) {
   }
 }
 
+async function markAsRead(messageId) {
+  try {
+    await makeClient().post('/messages', {
+      messaging_product: 'whatsapp',
+      status: 'read',
+      message_id: messageId,
+    });
+  } catch (err) {
+    logger.warn({ service: 'whatsapp', fn: 'markAsRead', error: err.response?.data || err.message });
+  }
+}
+
+async function showTyping(to) {
+  try {
+    await makeClient().post('/messages', {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to.replace('+', ''),
+      type: 'reaction',
+      // Cloud API typing indicator
+      typing: { status: 'typing' },
+    });
+  } catch {
+    // Typing indicator is best-effort — never block message delivery
+  }
+}
+
 function notifyPaymentReceived(phone, amount, studentName, total) {
   return sendText(phone, `SquadBridge: ₦${amount.toLocaleString()} received from ${studentName}. Total collected: ₦${total.toLocaleString()}. View: ${process.env.FRONTEND_URL}`);
 }
@@ -74,6 +101,8 @@ function notifyOnboarding(phone, nuban) {
 module.exports = {
   sendMessage,
   sendText,
+  markAsRead,
+  showTyping,
   notifyPaymentReceived,
   notifyPayrollComplete,
   notifyForecastAlert,

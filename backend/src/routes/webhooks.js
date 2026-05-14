@@ -200,6 +200,10 @@ router.post('/whatsapp', async (req, res) => {
 
     if (!userText) return;
 
+    // Show read receipt + typing bubble while Claude thinks
+    await whatsappService.markAsRead(message.id);
+    await whatsappService.showTyping(senderPhone);
+
     const school = await School.findOne({ where: { phone: senderPhone } });
     const schoolContext = school
       ? { name: school.name, student_count: school.student_count, fee_per_term: school.fee_per_term, balance: 0 }
