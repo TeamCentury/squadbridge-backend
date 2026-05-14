@@ -1,20 +1,31 @@
 const axios = require('axios');
+const crypto = require('crypto');
 const logger = require('../config/logger');
 
 const BASE_URL = 'https://graph.facebook.com/v19.0';
-const PHONE_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
-const client = axios.create({
-  baseURL: `${BASE_URL}/${PHONE_ID}`,
-  headers: {
-    Authorization: `Bearer ${process.env.META_WHATSAPP_TOKEN}`,
-    'Content-Type': 'application/json',
-  },
-});
+function getAppSecretProof() {
+  const token = process.env.META_WHATSAPP_TOKEN;
+  const secret = process.env.META_APP_SECRET;
+  if (!token || !secret) return null;
+  return crypto.createHmac('sha256', secret).update(token).digest('hex');
+}
+
+function makeClient() {
+  const proof = getAppSecretProof();
+  return axios.create({
+    baseURL: `${BASE_URL}/${process.env.WHATSAPP_PHONE_NUMBER_ID}`,
+    headers: {
+      Authorization: `Bearer ${process.env.META_WHATSAPP_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    params: proof ? { appsecret_proof: proof } : {},
+  });
+}
 
 async function sendMessage(to, templateName, components = []) {
   try {
-    const res = await client.post('/messages', {
+    const res = await makeClient().post('/messages', {
       messaging_product: 'whatsapp',
       to: to.replace('+', ''),
       type: 'template',
@@ -32,7 +43,7 @@ async function sendMessage(to, templateName, components = []) {
 
 async function sendText(to, text) {
   try {
-    const res = await client.post('/messages', {
+    const res = await makeClient().post('/messages', {
       messaging_product: 'whatsapp',
       to: to.replace('+', ''),
       type: 'text',
