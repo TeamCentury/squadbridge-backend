@@ -38,3 +38,7 @@ local.settings.json
 
 
 .claude
+
+.env
+
+.env.example
