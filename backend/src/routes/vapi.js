@@ -1,9 +1,12 @@
 const router = require('express').Router();
+const validateVapiSecret = require('../middleware/validateVapiSecret');
 const { Trader, Graduate, School, ConversationSession } = require('../models');
 const squadService = require('../services/squadService');
 const { scoreUser } = require('../services/creditScoringService');
 const { sendAllDigests } = require('../services/opportunityService');
 const logger = require('../config/logger');
+
+router.use(validateVapiSecret);
 
 /**
  * @swagger
@@ -142,6 +145,12 @@ router.post('/function-call', async (req, res) => {
     }
 
     if (fnName === 'get_balance') {
+      // Only expose balance to registered school admins identified by phone
+      if (!phone) return res.json({ result: 'I need to verify your identity to share balance information.' });
+      const normalized = phone.replace(/^\+234/, '0').slice(-10);
+      const school = await School.findOne({ where: { phone: { [require('sequelize').Op.like]: `%${normalized}` } } });
+      if (!school) return res.json({ result: 'Balance information is available to registered school administrators only.' });
+
       const balRes = await squadService.getBalance().catch(() => null);
       const balance = balRes?.data?.balance || 0;
       return res.json({ result: `Your platform balance is ₦${Number(balance).toLocaleString()}.` });

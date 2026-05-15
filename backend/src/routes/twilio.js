@@ -1,8 +1,12 @@
 const router = require('express').Router();
+const validateTwilioSig = require('../middleware/validateTwilioSig');
 const { Trader, Graduate, ConversationSession } = require('../models');
 const squadService = require('../services/squadService');
 const { scoreUser } = require('../services/creditScoringService');
 const logger = require('../config/logger');
+
+// Apply Twilio signature validation to all routes in this file
+router.use(validateTwilioSig);
 
 // Twilio's VoiceResponse helper (TwiML)
 function twiml(content) {
@@ -110,6 +114,11 @@ router.post('/menu', async (req, res) => {
     }
 
     if (Digits === '3') {
+      // Only expose balance to registered school admins
+      const school = await require('../models').School.findOne({ where: { phone: { [require('sequelize').Op.like]: `%${normalized}` } } });
+      if (!school) {
+        return res.send(twiml(`${say('Balance information is available to registered school administrators only.')}${redirect('/api/v1/twilio/voice')}`));
+      }
       const balRes = await squadService.getBalance().catch(() => null);
       const balance = balRes?.data?.balance || 0;
       return res.send(twiml(`${say(`Platform balance is ₦${Number(balance).toLocaleString()}.`)}${redirect('/api/v1/twilio/voice')}`));
@@ -143,15 +152,28 @@ router.post('/menu', async (req, res) => {
  *     security: []
  */
 router.post('/register-bvn', async (req, res) => {
-  const { Digits, From } = req.body;
+  const { Digits, From, CallSid } = req.body;
   res.type('text/xml');
 
   if (!Digits || Digits.length !== 11) {
     return res.send(twiml(`${say('Invalid BVN. Please try again.')}${redirect('/api/v1/twilio/voice')}`));
   }
 
+  // Store BVN server-side keyed to CallSid — never put sensitive data in URL params
+  try {
+    await ConversationSession.upsert({
+      session_id: CallSid,
+      phone: From || '',
+      channel: 'twilio',
+      context: JSON.stringify({ bvn_pending: true }),
+      last_active_at: new Date(),
+    });
+  } catch (e) {
+    logger.warn({ fn: 'twilio.register-bvn', error: e.message });
+  }
+
   return res.send(twiml(gather(
-    { action: `/api/v1/twilio/register-trade?bvn=${Digits}&phone=${encodeURIComponent(From)}`, numDigits: 1, timeout: 10 },
+    { action: `/api/v1/twilio/register-trade?call=${encodeURIComponent(CallSid)}`, numDigits: 1, timeout: 10 },
     `${say('BVN captured. Now select your trade.')}
      ${say('Press 1 for Plumber.')}
      ${say('Press 2 for Electrician.')}
@@ -170,19 +192,20 @@ router.post('/register-bvn', async (req, res) => {
  *     security: []
  */
 router.post('/register-trade', async (req, res) => {
-  const { Digits } = req.body;
-  const { bvn, phone } = req.query;
+  const { Digits, From } = req.body;
+  const { call: callSid } = req.query;
   res.type('text/xml');
 
   const tradeMap = { '1': 'plumber', '2': 'electrician', '3': 'carpenter', '4': 'painter', '5': 'general_handyperson' };
   const trade = tradeMap[Digits] || 'general_handyperson';
 
   try {
-    // Save partial registration — user completes via WhatsApp or web
-    await ConversationSession.create({
-      phone: phone || '',
+    // Retrieve session and update with trade — BVN stays server-side, never in URL
+    await ConversationSession.upsert({
+      session_id: callSid,
+      phone: From || '',
       channel: 'twilio',
-      context: JSON.stringify({ bvn_captured: true, trade, registration_started: true }),
+      context: JSON.stringify({ bvn_pending: true, trade, registration_started: true }),
       last_active_at: new Date(),
     });
 

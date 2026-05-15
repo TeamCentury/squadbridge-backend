@@ -1,5 +1,7 @@
 const logger = require('../config/logger');
 
+const isProd = process.env.NODE_ENV === 'production';
+
 module.exports = (err, req, res, next) => {
   logger.error({ message: err.message, stack: err.stack, path: req.path, method: req.method });
 
@@ -16,6 +18,7 @@ module.exports = (err, req, res, next) => {
 
   const status = err.status || err.statusCode || 500;
   res.status(status).json({
-    error: err.message || 'Internal server error',
+    // Never leak internal error details to clients in production
+    error: isProd && status === 500 ? 'Internal server error' : (err.message || 'Internal server error'),
   });
 };

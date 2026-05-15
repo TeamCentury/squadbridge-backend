@@ -100,13 +100,28 @@ router.post('/squad/payment', validateSquadSig, async (req, res) => {
     if (already) return logger.info({ event: 'webhook_duplicate', txId });
     await redis.set(dedupeKey, '1', 'EX', 86400);
 
-    const amount = parseFloat(payload?.data?.transaction_amount || payload?.amount || 0);
-    const linkId = payload?.data?.payment_link_ref || payload?.payment_link_ref;
-    const status = payload?.data?.transaction_status || payload?.transaction_status;
-
-    if (status !== 'successful' && status !== 'success') {
-      return logger.info({ event: 'webhook_non_success', status, txId });
+    const webhookStatus = payload?.data?.transaction_status || payload?.transaction_status;
+    if (webhookStatus !== 'successful' && webhookStatus !== 'success') {
+      return logger.info({ event: 'webhook_non_success', status: webhookStatus, txId });
     }
+
+    // Verify the transaction server-side before trusting webhook amounts
+    let verified;
+    try {
+      const verifyRes = await squadService.verifyTransaction(txId);
+      verified = verifyRes?.data;
+    } catch (verifyErr) {
+      logger.warn({ event: 'webhook_verify_failed', txId, error: verifyErr.message });
+      return; // Silently drop — do not update balances on unverifiable transactions
+    }
+
+    if (!verified || (verified.transaction_status !== 'successful' && verified.transaction_status !== 'success')) {
+      return logger.warn({ event: 'webhook_verify_mismatch', txId, status: verified?.transaction_status });
+    }
+
+    // Use verified amounts from Squad, not the webhook payload
+    const amount = parseFloat(verified.transaction_amount || 0);
+    const linkId = verified.payment_link_ref || payload?.data?.payment_link_ref;
 
     const student = linkId
       ? await Student.findOne({ where: { payment_link_id: linkId } })
