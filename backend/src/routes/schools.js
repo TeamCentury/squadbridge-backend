@@ -110,7 +110,13 @@ router.post('/onboard', [
 
     let merchantData;
     try {
-      merchantData = await squadService.createSubMerchant({ display_name: name, bvn, phone_number: phone });
+      merchantData = await squadService.createSubMerchant({
+        display_name: name,
+        account_name: name,
+        account_number: req.body.settlement_account || '0000000000',
+        bank: req.body.settlement_nip_code || '000013',       // 6-digit NIP code
+        bank_code: req.body.settlement_bank_code || '058',    // 3-digit CBN code
+      });
     } catch (err) {
       return res.status(422).json({ error: 'Identity verification failed. Please check your BVN.' });
     }
