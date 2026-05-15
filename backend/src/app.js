@@ -45,8 +45,12 @@ app.use(compression());
 app.use(morgan('combined'));
 
 // Raw body for webhook signature verification (before json parser)
+// Stash the exact bytes on req.rawBody so validateSquadSig can HMAC them without re-serialization
 app.use('/webhooks', express.raw({ type: 'application/json' }), (req, res, next) => {
-  if (Buffer.isBuffer(req.body)) req.body = JSON.parse(req.body.toString());
+  if (Buffer.isBuffer(req.body)) {
+    req.rawBody = req.body;
+    req.body = JSON.parse(req.body.toString());
+  }
   next();
 });
 

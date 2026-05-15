@@ -1,7 +1,9 @@
 const router = require('express').Router();
 const validateSquadSig = require('../middleware/validateSquadSig');
+const validateMetaSig = require('../middleware/validateMetaSig');
 const redis = require('../config/redis');
 const { Student, Transaction, School, Forecast, AuditLog } = require('../models');
+const squadService = require('../services/squadService');
 const whatsappService = require('../services/whatsappService');
 const { generateTTS, transcribeAudio } = require('../services/spitchService');
 const { handleWhatsAppChat, explainForecast } = require('../services/claudeService');
@@ -308,7 +310,7 @@ async function handleButtonAction(buttonId, phone, school) {
   }
 }
 
-router.post('/whatsapp', async (req, res) => {
+router.post('/whatsapp', validateMetaSig, async (req, res) => {
   res.sendStatus(200);
 
   try {

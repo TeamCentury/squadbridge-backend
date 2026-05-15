@@ -7,10 +7,19 @@ module.exports = (req, res, next) => {
   }
 
   const secret = process.env.SQUAD_WEBHOOK_SECRET;
-  const body = JSON.stringify(req.body);
-  const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
+  if (!secret) {
+    return res.status(500).json({ error: 'Webhook secret not configured' });
+  }
 
-  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+  // Sign the raw body bytes — not re-serialized JSON — to avoid normalization drift
+  const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body));
+  const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+
+  const sigBuf = Buffer.from(signature);
+  const expBuf = Buffer.from(expected);
+
+  // timingSafeEqual requires equal-length buffers; mismatched lengths means invalid
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
     return res.status(401).json({ error: 'Invalid webhook signature' });
   }
 
