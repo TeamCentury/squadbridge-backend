@@ -7,11 +7,11 @@ const ConversationSession = sequelize.define('ConversationSession', {
   phone: { type: DataTypes.STRING(20), unique: false },
   session_id: DataTypes.STRING(255), // Vapi call ID or web session token
   channel: {
-    type: DataTypes.ENUM('whatsapp', 'vapi', 'twilio', 'ussd', 'web'),
+    type: DataTypes.STRING(20),
     allowNull: false,
   },
   user_id: DataTypes.UUID,
-  user_type: DataTypes.ENUM('graduate', 'trader', 'employer', 'school', 'unknown'),
+  user_type: DataTypes.STRING(20),
   language: { type: DataTypes.STRING(10), defaultValue: 'en-NG' },
   voice_preference: { type: DataTypes.BOOLEAN, defaultValue: false },
   messages: { type: DataTypes.TEXT, defaultValue: '[]' }, // JSON array of {role, content, ts}

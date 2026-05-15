@@ -211,4 +211,25 @@ router.post('/call-end', async (req, res) => {
   }
 });
 
+// Unified webhook — Vapi sends all server messages to one URL
+router.post('/webhook', async (req, res) => {
+  const type = req.body?.message?.type;
+  if (type === 'assistant-request') {
+    req.url = '/assistant-request';
+    return router.handle(req, res, () => res.status(404).end());
+  }
+  if (type === 'function-call') {
+    // Re-shape body so /function-call handler works as-is
+    req.body = { call: req.body.message.call, functionCall: req.body.message.functionCall };
+    req.url = '/function-call';
+    return router.handle(req, res, () => res.status(404).end());
+  }
+  if (type === 'end-of-call-report') {
+    req.body = { call: req.body.message.call };
+    req.url = '/call-end';
+    return router.handle(req, res, () => res.status(404).end());
+  }
+  res.json({ received: true });
+});
+
 module.exports = router;
