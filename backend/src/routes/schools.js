@@ -115,12 +115,18 @@ router.post('/onboard', [
       return res.status(422).json({ error: 'Identity verification failed. Please check your BVN.' });
     }
 
+    const nameParts = name.split(' ');
     const vaRes = await squadService.createVirtualAccount({
-      customer_identifier: phone,
-      display_name: name,
+      customer_identifier: phone.replace('+', ''),
+      first_name: nameParts[0],
+      last_name: nameParts.slice(1).join(' ') || nameParts[0],
+      mobile_num: phone.replace('+', ''),
       bvn,
+      dob: req.body.dob || '01/01/1980', // MM/DD/YYYY
+      address: address || `${lga}, ${state}`,
+      gender: req.body.gender || '1',
     });
-    const nuban = vaRes?.data?.account_number;
+    const nuban = vaRes?.data?.virtual_account_number;
 
     const password_hash = await bcrypt.hash(password, 12);
 
@@ -287,7 +293,7 @@ router.get('/:id/dashboard', async (req, res, next) => {
     if (!school) return res.status(404).json({ error: 'School not found' });
 
     const [balanceRes, students, recentTx, forecast] = await Promise.all([
-      squadService.getBalance(school.squad_merchant_id).catch(() => null),
+      squadService.getBalance().catch(() => null),
       Student.findAll({ where: { school_id: school.id } }),
       Transaction.findAll({ where: { school_id: school.id, status: 'successful' }, order: [['createdAt', 'DESC']], limit: 5 }),
       Forecast.findOne({ where: { school_id: school.id }, order: [['generated_at', 'DESC']] }),

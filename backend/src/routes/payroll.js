@@ -163,7 +163,7 @@ router.post('/execute', async (req, res, next) => {
     if (!config) return res.status(400).json({ error: 'No active payroll configuration' });
     if (!staffList.length) return res.status(400).json({ error: 'No staff configured for payroll' });
 
-    const balanceRes = await squadService.getBalance(school.squad_merchant_id);
+    const balanceRes = await squadService.getBalance();
     const balance = balanceRes?.data?.balance || 0;
 
     if (balance < config.total_amount) {
@@ -171,16 +171,21 @@ router.post('/execute', async (req, res, next) => {
       return res.status(402).json({ error: 'Insufficient balance for payroll', balance, required: config.total_amount });
     }
 
-    const transfers = staffList.map((s) => ({
+    const batchRef = `SB-${Date.now()}`;
+    const merchantId = process.env.SQUAD_MERCHANT_ID || school.squad_merchant_id || 'SB';
+
+    const transfers = staffList.map((s, i) => ({
+      transaction_reference: `${merchantId}_payroll_${batchRef}_${i}`,
       account_number: s.account_number,
-      bank_code: s.bank_code,
-      amount: parseFloat(s.amount) * 100,
+      bank_code: s.nip_code || s.bank_code, // must be 6-digit NIP code (e.g. '000013' for GTBank)
+      account_name: s.name,
+      amount: Math.round(parseFloat(s.amount) * 100), // kobo
       currency_id: 'NGN',
-      remark: `${school.name} payroll - ${new Date().toLocaleString('en-NG', { month: 'long', year: 'numeric' })}`,
+      remark: `${school.name} payroll ${new Date().toLocaleString('en-NG', { month: 'long', year: 'numeric' })}`,
     }));
 
-    const bulkRes = await squadService.bulkTransfer({ transactions: transfers });
-    const batchId = bulkRes?.data?.batch_id || `SB-${Date.now()}`;
+    const bulkRes = await squadService.bulkTransfer({ batch_ref: batchRef, transaction_details: transfers });
+    const batchId = bulkRes?.batch_ref || batchRef;
 
     const log = await PayrollLog.create({
       school_id: school.id, config_id: config.id, total_amount: config.total_amount,

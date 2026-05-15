@@ -75,7 +75,7 @@ router.post('/refresh', async (req, res, next) => {
     const school = await School.findByPk(req.params.id);
     if (!school) return res.status(404).json({ error: 'School not found' });
 
-    const balanceRes = await squadService.getBalance(school.squad_merchant_id).catch(() => null);
+    const balanceRes = await squadService.getBalance().catch(() => null);
     const currentBalance = balanceRes?.data?.balance || 0;
 
     const forecast = await computeForecast(school.id, currentBalance);

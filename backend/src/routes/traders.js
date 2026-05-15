@@ -106,9 +106,10 @@ router.post('/register', [
         first_name: name.split(' ')[0],
         last_name: name.split(' ').slice(1).join(' ') || name,
         mobile_num: phone.replace('+', ''),
-        bvn: bvn || undefined,
-        beneficiary_account: '0000000000', // placeholder
-        bank_code: '000', // placeholder
+        bvn: bvn || '22222222222',
+        dob: req.body.dob || '01/01/1990', // MM/DD/YYYY
+        address: address || `${lga || ''}, ${state || 'Lagos'}`,
+        gender: req.body.gender || '1',
       });
       nuban = vaRes?.data?.virtual_account_number;
       squad_merchant_id = vaRes?.data?.merchant_id;

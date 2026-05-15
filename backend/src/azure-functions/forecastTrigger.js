@@ -18,7 +18,7 @@ app.timer('forecastTrigger', {
 
     for (const school of schools) {
       try {
-        const balanceRes = await squadService.getBalance(school.squad_merchant_id).catch(() => null);
+        const balanceRes = await squadService.getBalance().catch(() => null);
         const balance = balanceRes?.data?.balance || 0;
 
         const forecast = await computeForecast(school.id, balance);

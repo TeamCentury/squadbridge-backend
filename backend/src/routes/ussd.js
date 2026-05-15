@@ -70,7 +70,7 @@ router.post('/callback', async (req, res) => {
     const level1 = parts[0];
 
     if (level1 === '1') {
-      const balanceRes = await squadService.getBalance(school.squad_merchant_id).catch(() => null);
+      const balanceRes = await squadService.getBalance().catch(() => null);
       const balance = balanceRes?.data?.balance || 0;
       const time = new Date().toLocaleString('en-NG', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
       return res.send(endSession(`Your Squad Balance: ₦${balance.toLocaleString()}\nAs of: ${time}`));
@@ -88,7 +88,7 @@ router.post('/callback', async (req, res) => {
 
     if (level1 === '3') {
       if (parts.length === 1) {
-        const balanceRes = await squadService.getBalance(school.squad_merchant_id).catch(() => null);
+        const balanceRes = await squadService.getBalance().catch(() => null);
         const balance = balanceRes?.data?.balance || 0;
         return res.send(continueSession(`Available: ₦${balance.toLocaleString()}\nEnter amount to transfer:`));
       }

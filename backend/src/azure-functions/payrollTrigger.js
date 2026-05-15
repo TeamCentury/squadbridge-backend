@@ -27,7 +27,7 @@ app.timer('payrollTrigger', {
         const staffList = await PayrollStaff.findAll({ where: { school_id: school.id, active: true } });
         if (!staffList.length) continue;
 
-        const balanceRes = await squadService.getBalance(school.squad_merchant_id).catch(() => null);
+        const balanceRes = await squadService.getBalance().catch(() => null);
         const balance = balanceRes?.data?.balance || 0;
 
         if (balance < parseFloat(config.total_amount)) {
