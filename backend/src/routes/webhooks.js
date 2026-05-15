@@ -386,6 +386,18 @@ router.post('/whatsapp', async (req, res) => {
 
     const school = await School.findOne({ where: { phone: senderPhone } });
 
+    // Unknown number — politely explain what SquadBridge is
+    if (!school && !buttonId && GREETINGS.includes(userText.toLowerCase())) {
+      await whatsappService.sendText(
+        senderPhone,
+        `👋 Hi! I'm the *SquadBridge* assistant.\n\nSquadBridge helps Nigerian schools automate fee collection, payroll, and cash flow management.\n\n` +
+        `• *School administrator?* Register your school at squadbridge.com to access your financial dashboard here.\n` +
+        `• *Parent paying fees?* Ask your school bursar for your personalised payment link.\n` +
+        `• *Questions?* Email support@squadbridge.com`
+      );
+      return;
+    }
+
     // Route: greeting → main menu
     if (GREETINGS.includes(userText.toLowerCase()) || buttonId === 'btn_menu') {
       await sendMainMenu(senderPhone, school);
@@ -400,11 +412,16 @@ router.post('/whatsapp', async (req, res) => {
       return;
     }
 
-    // Route: free text → Claude
-    const schoolContext = school
-      ? { name: school.name, student_count: school.student_count, fee_per_term: school.fee_per_term, balance: 0 }
-      : null;
+    // Route: free text → Claude (school users only) or onboarding nudge
+    if (!school) {
+      await whatsappService.sendText(
+        senderPhone,
+        `I don't have your school on record yet. 🏫\n\nTo use SquadBridge:\n1. Register at squadbridge.com\n2. Use the same phone number you sign up with\n\nOnce registered, text *menu* to get started.\n\nFor help: support@squadbridge.com`
+      );
+      return;
+    }
 
+    const schoolContext = { name: school.name, student_count: school.student_count, fee_per_term: school.fee_per_term, balance: 0 };
     const reply = await handleWhatsAppChat(userText, schoolContext);
     await whatsappService.sendText(senderPhone, reply);
     await whatsappService.sendButtons(senderPhone, 'What would you like to do next?', FOLLOWUP_BUTTONS);
