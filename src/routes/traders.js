@@ -93,6 +93,10 @@ router.post('/register', [
     const existing = await Trader.findOne({ where: { phone } });
     if (existing) return res.status(400).json({ error: 'Phone number already registered' });
 
+    if (isProd && bvn && bvn === '22222222222') {
+      return res.status(400).json({ error: 'Invalid BVN. Please provide your real 11-digit BVN.' });
+    }
+
     const password_hash = await bcrypt.hash(password, 10);
 
     // Create Squad virtual account for receiving payments
@@ -549,6 +553,28 @@ router.get('/credit', async (req, res, next) => {
   try {
     const result = await scoreUser(req.user.user_id, 'trader');
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ──────────────────────────────────────────────
+// Platform balance (sum of released escrow earnings)
+// ──────────────────────────────────────────────
+router.get('/balance', authMiddleware, async (req, res, next) => {
+  try {
+    const { EscrowAccount } = require('../models');
+    const earned = await EscrowAccount.sum('agreed_amount', {
+      where: { worker_id: req.user.user_id, worker_type: 'trader', status: 'released' },
+    }) || 0;
+    const pending = await EscrowAccount.sum('agreed_amount', {
+      where: { worker_id: req.user.user_id, worker_type: 'trader', status: 'funded' },
+    }) || 0;
+    res.json({
+      balance: parseFloat(earned),
+      pending_escrow: parseFloat(pending),
+      currency: 'NGN',
+    });
   } catch (err) {
     next(err);
   }

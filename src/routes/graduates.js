@@ -596,6 +596,28 @@ router.post('/payment-link', [
  *       200:
  *         description: Credit score and breakdown
  */
+// ──────────────────────────────────────────────
+// Platform balance (sum of released escrow earnings)
+// ──────────────────────────────────────────────
+router.get('/balance', async (req, res, next) => {
+  try {
+    const { EscrowAccount } = require('../models');
+    const earned = await EscrowAccount.sum('agreed_amount', {
+      where: { worker_id: req.user.user_id, worker_type: 'graduate', status: 'released' },
+    }) || 0;
+    const pending = await EscrowAccount.sum('agreed_amount', {
+      where: { worker_id: req.user.user_id, worker_type: 'graduate', status: 'funded' },
+    }) || 0;
+    res.json({
+      balance: parseFloat(earned),
+      pending_escrow: parseFloat(pending),
+      currency: 'NGN',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/credit', async (req, res, next) => {
   try {
     const result = await scoreUser(req.user.user_id, 'graduate');

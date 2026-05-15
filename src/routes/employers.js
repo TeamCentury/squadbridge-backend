@@ -98,6 +98,31 @@ router.post('/login', async (req, res) => {
 
 /**
  * @swagger
+ * /api/v1/employers/balance:
+ *   get:
+ *     summary: Get employer escrow balance (funded + released)
+ *     tags: [Employers]
+ */
+router.get('/balance', auth, async (req, res) => {
+  try {
+    const locked = await EscrowAccount.sum('agreed_amount', {
+      where: { employer_id: req.employer.id, status: 'funded' },
+    }) || 0;
+    const released = await EscrowAccount.sum('agreed_amount', {
+      where: { employer_id: req.employer.id, status: 'released' },
+    }) || 0;
+    res.json({
+      locked_in_escrow: parseFloat(locked),
+      total_released: parseFloat(released),
+      currency: 'NGN',
+    });
+  } catch (err) {
+    res.status(500).json({ error: safeErr(err) });
+  }
+});
+
+/**
+ * @swagger
  * /api/v1/employers/me:
  *   get:
  *     summary: Get employer profile
