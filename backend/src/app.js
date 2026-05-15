@@ -20,6 +20,7 @@ const webhookRoutes = require('./routes/webhooks');
 const ussdRoutes = require('./routes/ussd');
 const voiceRoutes = require('./routes/voice');
 const auditRoutes = require('./routes/auditLog');
+const adminRoutes = require('./routes/admin');
 
 const path = require('path');
 
@@ -102,6 +103,7 @@ app.get('/privacy', (req, res) => {
 
 // Public routes
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/admin', adminRoutes);
 app.use('/ussd', ussdRoutes);
 app.use('/webhooks', webhookRoutes);
 
