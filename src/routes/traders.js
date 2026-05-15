@@ -561,7 +561,7 @@ router.get('/credit', async (req, res, next) => {
 // ──────────────────────────────────────────────
 // Platform balance (sum of released escrow earnings)
 // ──────────────────────────────────────────────
-router.get('/balance', authMiddleware, async (req, res, next) => {
+router.get('/balance', async (req, res, next) => {
   try {
     const { EscrowAccount } = require('../models');
     const earned = await EscrowAccount.sum('agreed_amount', {

@@ -92,6 +92,10 @@ router.post('/register', [
     const existing = await Graduate.findOne({ where: { phone } });
     if (existing) return res.status(400).json({ error: 'Phone number already registered' });
 
+    if (isProd && bvn && bvn === '22222222222') {
+      return res.status(400).json({ error: 'Invalid BVN. Please provide your real 11-digit BVN.' });
+    }
+
     const password_hash = await bcrypt.hash(password, 10);
 
     let nuban = null;

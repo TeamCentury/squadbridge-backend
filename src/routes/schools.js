@@ -108,6 +108,10 @@ router.post('/onboard', [
 
     const { name, phone, bvn, state, lga, address, student_count, fee_per_term, staff_count, avg_salary, password } = req.body;
 
+    if (process.env.NODE_ENV === 'production' && bvn === '22222222222') {
+      return res.status(400).json({ error: 'Invalid BVN. Please provide your real 11-digit BVN.' });
+    }
+
     let merchantData;
     try {
       merchantData = await squadService.createSubMerchant({

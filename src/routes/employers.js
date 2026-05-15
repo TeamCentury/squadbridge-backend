@@ -48,7 +48,7 @@ router.post('/register', async (req, res) => {
         last_name: name.split(' ').slice(1).join(' ') || name.split(' ')[0],
         mobile_num: phone.replace(/^\+/, '').replace(/^234/, '0'),
         email,
-        bvn: '22222222222',
+        bvn: req.body.bvn || (process.env.NODE_ENV !== 'production' ? '22222222222' : undefined),
         dob: '01/01/1985',
         address: address || '1 Business District, Lagos',
         gender: '1',
