@@ -21,6 +21,8 @@ const ussdRoutes = require('./routes/ussd');
 const voiceRoutes = require('./routes/voice');
 const auditRoutes = require('./routes/auditLog');
 const adminRoutes = require('./routes/admin');
+const traderRoutes = require('./routes/traders');
+const graduateRoutes = require('./routes/graduates');
 
 const path = require('path');
 
@@ -104,6 +106,12 @@ app.get('/privacy', (req, res) => {
 // Public routes
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', adminRoutes);
+
+// Phase 2 — Trader/Artisan (auth endpoints are public, protected ones use middleware internally)
+app.use('/api/v1/traders', traderRoutes);
+
+// Phase 3 — Graduate (same pattern)
+app.use('/api/v1/graduates', graduateRoutes);
 app.use('/ussd', ussdRoutes);
 app.use('/webhooks', webhookRoutes);
 

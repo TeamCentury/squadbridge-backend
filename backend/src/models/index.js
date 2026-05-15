@@ -7,6 +7,12 @@ const PayrollStaff = require('./PayrollStaff');
 const PayrollLog = require('./PayrollLog');
 const Forecast = require('./Forecast');
 const AuditLog = require('./AuditLog');
+const Trader = require('./Trader');
+const TraderJob = require('./TraderJob');
+const Graduate = require('./Graduate');
+const GraduateGig = require('./GraduateGig');
+const CreditProfile = require('./CreditProfile');
+const CreditEvent = require('./CreditEvent');
 
 // Associations
 School.hasMany(Student, { foreignKey: 'school_id', as: 'students' });
@@ -33,6 +39,14 @@ Forecast.belongsTo(School, { foreignKey: 'school_id' });
 School.hasMany(AuditLog, { foreignKey: 'school_id', as: 'auditLogs' });
 AuditLog.belongsTo(School, { foreignKey: 'school_id' });
 
+// Trader associations
+Trader.hasMany(TraderJob, { foreignKey: 'trader_id', as: 'jobs' });
+TraderJob.belongsTo(Trader, { foreignKey: 'trader_id' });
+
+// Graduate associations
+Graduate.hasMany(GraduateGig, { foreignKey: 'graduate_id', as: 'gigs' });
+GraduateGig.belongsTo(Graduate, { foreignKey: 'graduate_id' });
+
 module.exports = {
   sequelize,
   School,
@@ -43,4 +57,10 @@ module.exports = {
   PayrollLog,
   Forecast,
   AuditLog,
+  Trader,
+  TraderJob,
+  Graduate,
+  GraduateGig,
+  CreditProfile,
+  CreditEvent,
 };
