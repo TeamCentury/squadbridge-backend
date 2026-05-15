@@ -3,17 +3,11 @@ name: Deploy Backend to Azure
 on:
   push:
     branches: [main]
-    paths:
-      - 'backend/**'
-      - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
 
     steps:
       - name: Checkout code
@@ -24,7 +18,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -41,4 +35,4 @@ jobs:
         uses: azure/webapps-deploy@v3
         with:
           app-name: app-squadbridge-feaf
-          package: backend
+          package: .
