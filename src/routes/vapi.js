@@ -117,63 +117,59 @@ Keep responses under 3 sentences. Speak naturally, no bullet points.`;
  *     tags: [Vapi Voice]
  *     security: []
  */
+async function executeTool(fnName, args, phone) {
+  if (fnName === 'get_credit_score') {
+    let user = null; let userType = 'trader';
+    if (phone) {
+      const normalized = phone.replace(/^\+234/, '0');
+      user = await Trader.findOne({ where: { phone: { [require('sequelize').Op.like]: `%${normalized.slice(-10)}` } } });
+      if (!user) {
+        user = await Graduate.findOne({ where: { phone: { [require('sequelize').Op.like]: `%${normalized.slice(-10)}` } } });
+        if (user) userType = 'graduate';
+      }
+    }
+    if (!user) return "I couldn't find your account. Please register on SquadBridge first.";
+    const profile = await scoreUser(user.id, userType);
+    return `Your credit score is ${profile.score} out of 850. ${profile.score >= 650 ? "That's a good score — you qualify for premium gigs!" : profile.score >= 500 ? "You're building well. Complete more jobs to improve." : "Keep completing jobs and payments to build your score."}`;
+  }
+
+  if (fnName === 'get_balance') {
+    if (!phone) return 'I need to verify your identity to share balance information.';
+    const normalized = phone.replace(/^\+234/, '0').slice(-10);
+    const school = await School.findOne({ where: { phone: { [require('sequelize').Op.like]: `%${normalized}` } } });
+    if (!school) return 'Balance information is available to registered school administrators only.';
+    const balRes = await squadService.getBalance().catch(() => null);
+    const balance = balRes?.data?.balance || 0;
+    return `Your platform balance is ₦${Number(balance).toLocaleString()}.`;
+  }
+
+  if (fnName === 'find_opportunities') {
+    const { GigPost } = require('../models');
+    const { Op } = require('sequelize');
+    const where = { status: 'open', expires_at: { [Op.gt]: new Date() } };
+    if (args.skill) where.skills_required = { [Op.like]: `%${args.skill}%` };
+    const gigs = await GigPost.findAll({ where, limit: 3, order: [['createdAt', 'DESC']] });
+    if (!gigs.length) return 'No open gigs match your skill right now. Check back tomorrow or try WhatsApp for curated opportunities.';
+    const list = gigs.map((g, i) => `${i + 1}. ${g.title} — ₦${g.budget_fixed?.toLocaleString() || 'negotiable'}`).join('. ');
+    return `I found ${gigs.length} open gigs: ${list}. Should I send these to your WhatsApp for details?`;
+  }
+
+  if (fnName === 'register_trader') {
+    return `To register as a ${args.trade || 'trader'}, I'll need your full name, phone number, and BVN. Visit squadbridge.ng or send a WhatsApp to our number to complete registration quickly. Would you like me to send you the link?`;
+  }
+
+  return 'I can help with that. Please try again or visit our website.';
+}
+
 router.post('/function-call', async (req, res) => {
   try {
     const { call, functionCall } = req.body;
     const phone = call?.customer?.number;
     const fnName = functionCall?.name;
     const args = functionCall?.parameters || {};
-
     logger.info({ fn: 'vapi.function-call', function: fnName, phone });
-
-    if (fnName === 'get_credit_score') {
-      let user = null; let userType = 'trader';
-      if (phone) {
-        const normalized = phone.replace(/^\+234/, '0');
-        user = await Trader.findOne({ where: { phone: { [require('sequelize').Op.like]: `%${normalized.slice(-10)}` } } });
-        if (!user) {
-          user = await Graduate.findOne({ where: { phone: { [require('sequelize').Op.like]: `%${normalized.slice(-10)}` } } });
-          if (user) userType = 'graduate';
-        }
-      }
-      if (!user) return res.json({ result: "I couldn't find your account. Please register on SquadBridge first." });
-
-      const profile = await scoreUser(user.id, userType);
-      return res.json({
-        result: `Your credit score is ${profile.score} out of 850. ${profile.score >= 650 ? "That's a good score — you qualify for premium gigs!" : profile.score >= 500 ? "You're building well. Complete more jobs to improve." : "Keep completing jobs and payments to build your score."}`,
-      });
-    }
-
-    if (fnName === 'get_balance') {
-      // Only expose balance to registered school admins identified by phone
-      if (!phone) return res.json({ result: 'I need to verify your identity to share balance information.' });
-      const normalized = phone.replace(/^\+234/, '0').slice(-10);
-      const school = await School.findOne({ where: { phone: { [require('sequelize').Op.like]: `%${normalized}` } } });
-      if (!school) return res.json({ result: 'Balance information is available to registered school administrators only.' });
-
-      const balRes = await squadService.getBalance().catch(() => null);
-      const balance = balRes?.data?.balance || 0;
-      return res.json({ result: `Your platform balance is ₦${Number(balance).toLocaleString()}.` });
-    }
-
-    if (fnName === 'find_opportunities') {
-      const { GigPost } = require('../models');
-      const { Op } = require('sequelize');
-      const where = { status: 'open', expires_at: { [Op.gt]: new Date() } };
-      if (args.skill) where.skills_required = { [Op.like]: `%${args.skill}%` };
-      const gigs = await GigPost.findAll({ where, limit: 3, order: [['createdAt', 'DESC']] });
-      if (!gigs.length) return res.json({ result: 'No open gigs match your skill right now. Check back tomorrow or try WhatsApp for curated opportunities.' });
-      const list = gigs.map((g, i) => `${i + 1}. ${g.title} — ₦${g.budget_fixed?.toLocaleString() || 'negotiable'}`).join('. ');
-      return res.json({ result: `I found ${gigs.length} open gigs: ${list}. Should I send these to your WhatsApp for details?` });
-    }
-
-    if (fnName === 'register_trader') {
-      return res.json({
-        result: `To register as a ${args.trade || 'trader'}, I'll need your full name, phone number, and BVN. Visit squadbridge.ng or send a WhatsApp to our number to complete registration quickly. Would you like me to send you the link?`,
-      });
-    }
-
-    res.json({ result: 'I can help with that. Please try again or visit our website.' });
+    const result = await executeTool(fnName, args, phone);
+    res.json({ result });
   } catch (err) {
     logger.error({ fn: 'vapi.function-call', error: err.message });
     res.json({ result: 'Sorry, I had trouble processing that. Please try again.' });
@@ -219,10 +215,29 @@ router.post('/webhook', async (req, res) => {
     return router.handle(req, res, () => res.status(404).end());
   }
   if (type === 'function-call') {
-    // Re-shape body so /function-call handler works as-is
     req.body = { call: req.body.message.call, functionCall: req.body.message.functionCall };
     req.url = '/function-call';
     return router.handle(req, res, () => res.status(404).end());
+  }
+  if (type === 'tool-calls') {
+    // Current Vapi format — toolCallList is an array, must return { results: [{toolCallId, result}] }
+    try {
+      const phone = req.body.message.call?.customer?.number;
+      const toolCallList = req.body.message.toolCallList || [];
+      const results = await Promise.all(
+        toolCallList.map(async (tc) => {
+          const fnName = tc.function?.name;
+          const args = JSON.parse(tc.function?.arguments || '{}');
+          logger.info({ fn: 'vapi.tool-calls', function: fnName, phone });
+          const result = await executeTool(fnName, args, phone);
+          return { toolCallId: tc.id, result };
+        })
+      );
+      return res.json({ results });
+    } catch (err) {
+      logger.error({ fn: 'vapi.tool-calls', error: err.message });
+      return res.json({ results: [{ toolCallId: '', result: 'Sorry, I had trouble processing that.' }] });
+    }
   }
   if (type === 'end-of-call-report') {
     req.body = { call: req.body.message.call };
