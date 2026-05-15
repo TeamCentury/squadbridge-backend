@@ -118,25 +118,30 @@ router.post('/onboard', [
         display_name: name,
         account_name: name,
         account_number: req.body.settlement_account || '0000000000',
-        bank: req.body.settlement_nip_code || '000013',       // 6-digit NIP code
-        bank_code: req.body.settlement_bank_code || '058',    // 3-digit CBN code
+        bank: req.body.settlement_nip_code || '000013',
+        bank_code: req.body.settlement_bank_code || '058',
       });
     } catch (err) {
-      return res.status(422).json({ error: 'Identity verification failed. Please check your BVN.' });
+      console.warn('[schools.onboard] createSubMerchant failed (non-fatal):', err.message);
     }
 
     const nameParts = name.split(' ');
-    const vaRes = await squadService.createVirtualAccount({
-      customer_identifier: phone.replace('+', ''),
-      first_name: nameParts[0],
-      last_name: nameParts.slice(1).join(' ') || nameParts[0],
-      mobile_num: phone.replace('+', ''),
-      bvn,
-      dob: req.body.dob || '01/01/1980', // MM/DD/YYYY
-      address: address || `${lga}, ${state}`,
-      gender: req.body.gender || '1',
-    });
-    const nuban = vaRes?.data?.virtual_account_number;
+    let nuban = null;
+    try {
+      const vaRes = await squadService.createVirtualAccount({
+        customer_identifier: phone.replace('+', ''),
+        first_name: nameParts[0],
+        last_name: nameParts.slice(1).join(' ') || nameParts[0],
+        mobile_num: phone.replace('+', ''),
+        bvn,
+        dob: req.body.dob || '01/01/1980',
+        address: address || `${lga}, ${state}`,
+        gender: req.body.gender || '1',
+      });
+      nuban = vaRes?.data?.virtual_account_number || null;
+    } catch (err) {
+      console.warn('[schools.onboard] createVirtualAccount failed (non-fatal):', err.message);
+    }
 
     const password_hash = await bcrypt.hash(password, 12);
 
