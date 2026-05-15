@@ -3,8 +3,31 @@ const validateSquadSig = require('../middleware/validateSquadSig');
 const redis = require('../config/redis');
 const { Student, Transaction, School, Forecast, AuditLog } = require('../models');
 const whatsappService = require('../services/whatsappService');
+const { generateTTS, transcribeAudio } = require('../services/spitchService');
 const { handleWhatsAppChat, explainForecast } = require('../services/claudeService');
 const logger = require('../config/logger');
+
+// Credit protection constants
+const VOICE_DAILY_PER_USER = 3;   // max 3 voice msgs per user per day
+const VOICE_DAILY_GLOBAL   = 20;  // max 20 voice msgs total per day across all users
+const TTS_MAX_CHARS        = 280; // only do TTS if reply is short enough
+
+async function checkVoiceQuota(phone) {
+  const today = new Date().toISOString().split('T')[0];
+  const userKey   = `voice:user:${phone}:${today}`;
+  const globalKey = `voice:global:${today}`;
+
+  const [userCount, globalCount] = await Promise.all([
+    redis.incr(userKey),
+    redis.incr(globalKey),
+  ]);
+  if (userCount === 1)   await redis.expire(userKey,   86400);
+  if (globalCount === 1) await redis.expire(globalKey, 86400);
+
+  if (globalCount > VOICE_DAILY_GLOBAL) return { allowed: false, reason: 'global' };
+  if (userCount   > VOICE_DAILY_PER_USER) return { allowed: false, reason: 'user' };
+  return { allowed: true };
+}
 
 /**
  * @swagger
@@ -299,6 +322,48 @@ router.post('/whatsapp', async (req, res) => {
 
     await whatsappService.markAsRead(message.id);
     await whatsappService.showTyping(message.id);
+
+    // ── Voice note handling ──────────────────────────────────────────────────
+    if (message.type === 'audio') {
+      const quota = await checkVoiceQuota(senderPhone);
+      if (!quota.allowed) {
+        const msg = quota.reason === 'global'
+          ? 'Our voice service is at capacity for today. Please type your question instead.'
+          : `You've used your ${VOICE_DAILY_PER_USER} voice messages for today. Type your question and I'll still help!`;
+        await whatsappService.sendText(senderPhone, msg);
+        return;
+      }
+
+      const { buffer, mimeType } = await whatsappService.downloadMedia(message.audio.id);
+      const stt = await transcribeAudio(buffer, mimeType);
+
+      if (!stt?.transcript) {
+        await whatsappService.sendText(senderPhone, "Sorry, I couldn't make out that voice note. Could you try again or type your question?");
+        return;
+      }
+
+      const detectedLang = stt.language || 'en-NG';
+      const school = await School.findOne({ where: { phone: senderPhone } });
+      const schoolCtx = school
+        ? { name: school.name, student_count: school.student_count, fee_per_term: school.fee_per_term, balance: 0 }
+        : null;
+
+      const reply = await handleWhatsAppChat(stt.transcript, schoolCtx, detectedLang);
+
+      // Send TTS audio only if reply is short enough to keep costs down
+      if (reply.length <= TTS_MAX_CHARS) {
+        const tts = await generateTTS(reply, detectedLang).catch(() => null);
+        if (tts?.audio_url) await whatsappService.sendAudio(senderPhone, tts.audio_url);
+      }
+
+      // Always send text too as fallback
+      await whatsappService.sendText(senderPhone, `🎤 _You said:_ "${stt.transcript}"\n\n${reply}`);
+      await whatsappService.sendButtons(senderPhone, 'What would you like to do next?', FOLLOWUP_BUTTONS);
+
+      logger.info({ event: 'whatsapp_voice', from: senderPhone, lang: detectedLang, school: school?.name });
+      return;
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     // Extract text or button selection
     let userText = '';

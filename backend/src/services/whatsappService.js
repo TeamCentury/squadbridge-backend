@@ -55,6 +55,40 @@ async function sendText(to, text) {
   }
 }
 
+async function downloadMedia(mediaId) {
+  const proof = getAppSecretProof();
+  const params = proof ? `?appsecret_proof=${proof}` : '';
+
+  // Step 1: resolve media URL
+  const metaRes = await fetch(`https://graph.facebook.com/v19.0/${mediaId}${params}`, {
+    headers: { Authorization: `Bearer ${process.env.META_WHATSAPP_TOKEN}` },
+  });
+  if (!metaRes.ok) throw new Error(`Media lookup failed: ${metaRes.status}`);
+  const { url, mime_type } = await metaRes.json();
+
+  // Step 2: download the file
+  const audioRes = await fetch(url, {
+    headers: { Authorization: `Bearer ${process.env.META_WHATSAPP_TOKEN}` },
+  });
+  if (!audioRes.ok) throw new Error(`Media download failed: ${audioRes.status}`);
+  const arrayBuf = await audioRes.arrayBuffer();
+  return { buffer: Buffer.from(arrayBuf), mimeType: mime_type || 'audio/ogg' };
+}
+
+async function sendAudio(to, audioUrl) {
+  try {
+    const res = await makeClient().post('/messages', {
+      messaging_product: 'whatsapp',
+      to: to.replace('+', ''),
+      type: 'audio',
+      audio: { link: audioUrl },
+    });
+    return res.data;
+  } catch (err) {
+    logger.error({ service: 'whatsapp', fn: 'sendAudio', error: err.response?.data || err.message });
+  }
+}
+
 async function sendButtons(to, bodyText, buttons) {
   // buttons: array of { id, title } — max 3, title max 20 chars
   try {
@@ -126,6 +160,8 @@ module.exports = {
   sendMessage,
   sendText,
   sendButtons,
+  sendAudio,
+  downloadMedia,
   markAsRead,
   showTyping,
   notifyPaymentReceived,

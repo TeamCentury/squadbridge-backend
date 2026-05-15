@@ -82,20 +82,33 @@ If in deficit, tell them exactly how much fee increase or how many more students
   }
 }
 
-async function handleWhatsAppChat(userMessage, schoolContext) {
+const LANG_NAMES = {
+  'en-NG': 'Nigerian English',
+  'yo-NG': 'Yoruba',
+  'ig-NG': 'Igbo',
+  'ha-NG': 'Hausa',
+  'pcm-NG': 'Nigerian Pidgin English',
+};
+
+async function handleWhatsAppChat(userMessage, schoolContext, language = 'en-NG') {
   const ctx = schoolContext
     ? `School: ${schoolContext.name} | Balance: ₦${Number(schoolContext.balance || 0).toLocaleString()} | Students: ${schoolContext.student_count} | Fee/term: ₦${Number(schoolContext.fee_per_term || 0).toLocaleString()}`
     : 'No school context';
 
+  const langName = LANG_NAMES[language] || 'English';
+  const langInstruction = language !== 'en-NG'
+    ? `IMPORTANT: The user spoke in ${langName}. You MUST reply in ${langName}.`
+    : 'Reply in clear Nigerian English.';
+
   try {
     const message = await client.messages.create({
       model: 'claude-opus-4-7',
-      max_tokens: 280,
+      max_tokens: 300,
       thinking: { type: 'adaptive' },
       system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
       messages: [{
         role: 'user',
-        content: `Context: ${ctx}\n\nMessage from school operator: "${userMessage}"\n\nReply in 1-3 sentences. Be direct and helpful. If they ask about numbers, use the context above.`,
+        content: `Context: ${ctx}\n\nMessage from school operator: "${userMessage}"\n\n${langInstruction} Reply in 1-3 sentences. Be direct and helpful. If they ask about numbers, use the context above.`,
       }],
     });
 

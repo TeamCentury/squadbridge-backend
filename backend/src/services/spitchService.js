@@ -2,8 +2,10 @@ const axios = require('axios');
 const { BlobServiceClient } = require('@azure/storage-blob');
 const logger = require('../config/logger');
 
+const SPITCH_BASE = 'https://api.spitch.co/v1';
+
 const client = axios.create({
-  baseURL: 'https://api.spitch.co/v1',
+  baseURL: SPITCH_BASE,
   headers: {
     Authorization: `Bearer ${process.env.SPITCH_API_KEY}`,
     'Content-Type': 'application/json',
@@ -50,4 +52,37 @@ function formatAmount(amount) {
   return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN' }).format(amount).replace('NGN', 'naira');
 }
 
-module.exports = { generateTTS, buildPayrollText, buildBalanceText, buildForecastAlertText };
+// STT — transcribe audio buffer, returns { transcript, language }
+// language is BCP-47: 'en-NG', 'yo-NG', 'ig-NG', 'ha-NG'
+async function transcribeAudio(audioBuffer, mimeType = 'audio/ogg') {
+  try {
+    const formData = new FormData();
+    const blob = new Blob([audioBuffer], { type: mimeType });
+    formData.append('audio', blob, 'voice.ogg');
+    formData.append('detect_language', 'true');
+
+    const res = await fetch(`${SPITCH_BASE}/stt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.SPITCH_API_KEY}` },
+      body: formData,
+      signal: AbortSignal.timeout(20000),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      logger.error({ service: 'spitch', fn: 'transcribeAudio', status: res.status, body: text });
+      return null;
+    }
+
+    const data = await res.json();
+    return {
+      transcript: data.transcript || data.text || '',
+      language: data.language || data.detected_language || 'en-NG',
+    };
+  } catch (err) {
+    logger.error({ service: 'spitch', fn: 'transcribeAudio', error: err.message });
+    return null;
+  }
+}
+
+module.exports = { generateTTS, transcribeAudio, buildPayrollText, buildBalanceText, buildForecastAlertText };
