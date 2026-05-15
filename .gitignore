@@ -19,26 +19,15 @@ coverage/
 logs/
 npm-debug.log*
 
-# OS
-.DS_Store
-Thumbs.db
-
 # Azure Functions local settings (contains secrets)
 local.settings.json
 
-# IDE
+# OS / IDE
+.DS_Store
+Thumbs.db
 .vscode/
 .idea/
 
 # Temporary files
 *.tmp
 *.temp
-
-.SquadBridge_SRS_v2_Full (2).docx.md
-
-
-.claude
-
-.env
-
-.env.example
