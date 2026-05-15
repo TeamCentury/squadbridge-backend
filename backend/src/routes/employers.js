@@ -3,6 +3,9 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Employer, GigPost, GigApplication, Trader, Graduate, EscrowAccount } = require('../models');
 const squadService = require('../services/squadService');
+
+const isProd = process.env.NODE_ENV === 'production';
+const safeErr = (err) => isProd ? 'Internal server error' : err.message;
 const escrowService = require('../services/escrowService');
 const { recordCreditEvent } = require('../services/creditScoringService');
 const logger = require('../config/logger');
@@ -67,7 +70,7 @@ router.post('/register', async (req, res) => {
     res.status(201).json({ message: 'Employer registered', token, employer: { id: employer.id, name: employer.name, email: employer.email, squad_virtual_account: employer.squad_virtual_account } });
   } catch (err) {
     logger.error({ fn: 'employers.register', error: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErr(err) });
   }
 });
 
@@ -89,7 +92,7 @@ router.post('/login', async (req, res) => {
     const token = jwt.sign({ id: employer.id, type: 'employer' }, process.env.JWT_SECRET, { expiresIn: '30d' });
     res.json({ token, employer: { id: employer.id, name: employer.name, email: employer.email, business_name: employer.business_name } });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErr(err) });
   }
 });
 
@@ -107,7 +110,7 @@ router.get('/me', auth, async (req, res) => {
     });
     if (!employer) return res.status(404).json({ error: 'Employer not found' });
     res.json(employer);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: safeErr(err) }); }
 });
 
 router.patch('/me', auth, async (req, res) => {
@@ -117,7 +120,7 @@ router.patch('/me', auth, async (req, res) => {
     const { business_name, business_type, address, state, bio } = req.body;
     await employer.update({ business_name, business_type, address, state, bio });
     res.json({ message: 'Profile updated', employer });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: safeErr(err) }); }
 });
 
 /**
@@ -147,12 +150,13 @@ router.get('/talent', auth, async (req, res) => {
     const [traders, graduates] = await Promise.all([
       type !== 'graduate' ? Trader.findAll({
         where: traderWhere,
-        attributes: ['id', 'name', 'phone', 'skills', 'primary_trade', 'state', 'rating', 'jobs_completed', 'hourly_rate'],
+        // Phone excluded — only shared after hire acceptance
+        attributes: ['id', 'name', 'skills', 'primary_trade', 'state', 'rating', 'jobs_completed', 'hourly_rate'],
         limit: 20,
       }) : [],
       type !== 'trader' ? Graduate.findAll({
         where: graduateWhere,
-        attributes: ['id', 'name', 'phone', 'skills', 'degree', 'field_of_study', 'state', 'rating', 'gigs_completed'],
+        attributes: ['id', 'name', 'skills', 'degree', 'field_of_study', 'state', 'rating', 'gigs_completed'],
         limit: 20,
       }) : [],
     ]);
@@ -162,7 +166,7 @@ router.get('/talent', auth, async (req, res) => {
       graduates: graduates.map((g) => ({ ...g.toJSON(), user_type: 'graduate' })),
       total: traders.length + graduates.length,
     });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: safeErr(err) }); }
 });
 
 /**
@@ -212,7 +216,7 @@ router.post('/hire', auth, async (req, res) => {
     });
   } catch (err) {
     logger.error({ fn: 'employers.hire', error: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErr(err) });
   }
 });
 
@@ -261,7 +265,7 @@ router.post('/escrow/:escrowId/release', auth, async (req, res) => {
     res.json({ message: 'Payment released', net_paid: result.net_paid, fee: result.fee });
   } catch (err) {
     logger.error({ fn: 'employers.release', error: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErr(err) });
   }
 });
 
@@ -282,7 +286,7 @@ router.post('/escrow/:escrowId/dispute', auth, async (req, res) => {
     const employer = await Employer.findByPk(req.employer.id, { attributes: ['phone'] });
     await escrowService.raiseDispute(req.params.escrowId, reason, employer.phone);
     res.json({ message: 'Dispute raised. Our team will review within 24 hours.' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: safeErr(err) }); }
 });
 
 /**
@@ -299,7 +303,7 @@ router.get('/escrows', auth, async (req, res) => {
       order: [['createdAt', 'DESC']],
     });
     res.json(escrows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: safeErr(err) }); }
 });
 
 module.exports = router;

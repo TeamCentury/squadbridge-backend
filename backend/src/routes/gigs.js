@@ -5,6 +5,9 @@ const escrowService = require('../services/escrowService');
 const { recordCreditEvent } = require('../services/creditScoringService');
 const logger = require('../config/logger');
 
+const isProd = process.env.NODE_ENV === 'production';
+const safeErr = (err) => isProd ? 'Internal server error' : err.message;
+
 // Generic auth — accepts trader, graduate, or employer JWT
 function auth(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
@@ -58,7 +61,7 @@ router.post('/', auth, async (req, res) => {
     res.status(201).json({ message: 'Gig posted', gig });
   } catch (err) {
     logger.error({ fn: 'gigs.post', error: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErr(err) });
   }
 });
 
@@ -90,7 +93,7 @@ router.get('/', async (req, res) => {
     });
 
     res.json({ gigs, count: gigs.length });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: safeErr(err) }); }
 });
 
 /**
@@ -108,7 +111,7 @@ router.get('/:gigId', async (req, res) => {
     });
     if (!gig) return res.status(404).json({ error: 'Gig not found' });
     res.json(gig);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: safeErr(err) }); }
 });
 
 /**
@@ -140,7 +143,7 @@ router.post('/:gigId/apply', auth, async (req, res) => {
     });
 
     res.status(201).json({ message: 'Application submitted', application });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: safeErr(err) }); }
 });
 
 /**
@@ -161,7 +164,7 @@ router.get('/:gigId/applications', auth, async (req, res) => {
       order: [['createdAt', 'ASC']],
     });
     res.json(applications);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: safeErr(err) }); }
 });
 
 /**
@@ -232,7 +235,7 @@ router.post('/:gigId/applications/:appId/accept', auth, async (req, res) => {
     });
   } catch (err) {
     logger.error({ fn: 'gigs.accept', error: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErr(err) });
   }
 });
 
@@ -307,7 +310,7 @@ router.post('/:gigId/complete', auth, async (req, res) => {
     return res.status(400).json({ error: 'Invalid action or unauthorized' });
   } catch (err) {
     logger.error({ fn: 'gigs.complete', error: err.message });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErr(err) });
   }
 });
 
@@ -326,7 +329,7 @@ router.get('/my/posted', auth, async (req, res) => {
       order: [['createdAt', 'DESC']],
     });
     res.json(gigs);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: safeErr(err) }); }
 });
 
 router.get('/my/applied', auth, async (req, res) => {
@@ -337,7 +340,7 @@ router.get('/my/applied', auth, async (req, res) => {
       order: [['createdAt', 'DESC']],
     });
     res.json(applications);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: safeErr(err) }); }
 });
 
 module.exports = router;

@@ -40,7 +40,10 @@ app.set('trust proxy', 1);
 
 // Security & parsing
 app.use(helmet());
-app.use(cors({ origin: process.env.FRONTEND_URL || '*', credentials: true }));
+const corsOrigin = process.env.FRONTEND_URL
+  ? process.env.FRONTEND_URL.split(',').map((o) => o.trim())
+  : (process.env.NODE_ENV === 'production' ? false : 'http://localhost:3000');
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(compression());
 app.use(morgan('combined'));
 
@@ -100,7 +103,7 @@ app.use('/api/docs',
       displayRequestDuration: true,
       docExpansion: 'list',
       filter: true,
-      tryItOutEnabled: true,
+      tryItOutEnabled: process.env.NODE_ENV !== 'production',
     },
   })
 );
