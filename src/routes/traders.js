@@ -9,6 +9,9 @@ const { scoreUser, recordCreditEvent } = require('../services/creditScoringServi
 const authMiddleware = require('../middleware/auth');
 const logger = require('../config/logger');
 
+const isProd = process.env.NODE_ENV === 'production';
+const TRADER_TYPES = ['artisan', 'trader', 'vendor', 'contractor', 'service_provider'];
+
 // ──────────────────────────────────────────────
 // Auth helpers
 // ──────────────────────────────────────────────
@@ -122,11 +125,20 @@ router.post('/register', [
       logger.warn({ fn: 'traders.register', msg: 'Squad VA failed', error: e.message });
     }
 
+    // Normalize business_type to valid enum; store free-text description in business_name
+    const safe_type = TRADER_TYPES.includes((business_type || '').toLowerCase())
+      ? business_type.toLowerCase()
+      : 'trader';
+    const safe_bname = business_name || business_type || name;
+
+    const skillsVal = Array.isArray(skills) ? JSON.stringify(skills)
+      : (typeof skills === 'string' && skills ? skills : null);
+
     const trader = await Trader.create({
       name, phone, email, password_hash,
-      business_name: business_name || name,
-      business_type,
-      skills: skills ? JSON.stringify(skills) : null,
+      business_name: safe_bname,
+      business_type: safe_type,
+      skills: skillsVal,
       state, lga, address, nuban, squad_merchant_id,
       bvn_verified,
     });

@@ -140,8 +140,8 @@ app.use('/api/v1/twilio', twilioRoutes);
 app.use('/ussd', ussdRoutes);
 app.use('/webhooks', webhookRoutes);
 
-// Protected routes — auth + ownership check on all /:id sub-routes
-app.use('/api/v1/schools', authMiddleware, schoolRoutes);
+// Schools — /onboard is public; auth is enforced inside the router after that route
+app.use('/api/v1/schools', schoolRoutes);
 app.use('/api/v1/schools/:id/payment-links', authMiddleware, requireSchoolOwnership, paymentLinkRoutes);
 app.use('/api/v1/schools/:id/payroll', authMiddleware, requireSchoolOwnership, payrollRoutes);
 app.use('/api/v1/schools/:id/forecast', authMiddleware, requireSchoolOwnership, forecastRoutes);

@@ -5,14 +5,13 @@ const redis = require('../config/redis');
 const { Student, Transaction, School, Forecast, AuditLog } = require('../models');
 const squadService = require('../services/squadService');
 const whatsappService = require('../services/whatsappService');
-const { generateTTS, transcribeAudio } = require('../services/spitchService');
+const { transcribeAudio } = require('../services/spitchService');
 const { handleWhatsAppChat, explainForecast } = require('../services/claudeService');
 const logger = require('../config/logger');
 
 // Credit protection constants
 const VOICE_DAILY_PER_USER = 3;   // max 3 voice msgs per user per day
 const VOICE_DAILY_GLOBAL   = 20;  // max 20 voice msgs total per day across all users
-const TTS_MAX_CHARS        = 280; // only do TTS if reply is short enough
 
 async function checkVoiceQuota(phone) {
   const today = new Date().toISOString().split('T')[0];
@@ -367,13 +366,8 @@ router.post('/whatsapp', validateMetaSig, async (req, res) => {
 
       const reply = await handleWhatsAppChat(stt.transcript, schoolCtx, detectedLang);
 
-      // Send TTS audio only if reply is short enough to keep costs down
-      if (reply.length <= TTS_MAX_CHARS) {
-        const tts = await generateTTS(reply, detectedLang).catch(() => null);
-        if (tts?.audio_url) await whatsappService.sendAudio(senderPhone, tts.audio_url);
-      }
-
-      // Always send text too as fallback
+      // Claude handles the transcript and returns the user-facing answer.
+      // Keep the WhatsApp response text-only so replies do not go back through Spitch TTS.
       await whatsappService.sendText(senderPhone, `🎤 _You said:_ "${stt.transcript}"\n\n${reply}`);
       await whatsappService.sendButtons(senderPhone, 'What would you like to do next?', FOLLOWUP_BUTTONS);
 

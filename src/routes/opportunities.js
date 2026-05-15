@@ -9,7 +9,12 @@ function auth(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token' });
   try {
-    req.actor = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.actor = {
+      ...decoded,
+      id:   decoded.user_id   || decoded.id,
+      type: decoded.user_type || decoded.type,
+    };
     next();
   } catch { res.status(401).json({ error: 'Invalid token' }); }
 }
@@ -60,7 +65,9 @@ router.get('/', async (req, res) => {
 router.get('/matched', auth, async (req, res) => {
   try {
     const { Trader, Graduate } = require('../models');
-    let user = null; let userType = req.actor.type;
+    const userType = req.actor.type;
+    const lim = Math.min(parseInt(req.query.limit) || 10, 50);
+    let user = null;
 
     if (userType === 'trader') {
       user = await Trader.findByPk(req.actor.id, { attributes: ['skills'] });
@@ -70,8 +77,9 @@ router.get('/matched', auth, async (req, res) => {
 
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const opps = await matchForUser(req.actor.id, userType, user.skills || '[]', 10);
-    res.json({ opportunities: opps, count: opps.length });
+    const opps = await matchForUser(req.actor.id, userType, user.skills || '[]', lim);
+    // Return flat array — frontend does Array.isArray() check
+    res.json(opps);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

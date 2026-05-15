@@ -6,6 +6,7 @@ const squadService = require('../services/squadService');
 const whatsappService = require('../services/whatsappService');
 const { AuditLog } = require('../models');
 const { generatePLRecommendation } = require('../services/claudeService');
+const authMiddleware = require('../middleware/auth');
 
 /**
  * @swagger
@@ -159,6 +160,9 @@ router.post('/onboard', [
     next(err);
   }
 });
+
+// All routes below require a valid JWT
+router.use(authMiddleware);
 
 /**
  * @swagger

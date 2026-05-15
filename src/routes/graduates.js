@@ -9,6 +9,8 @@ const { scoreUser, recordCreditEvent } = require('../services/creditScoringServi
 const authMiddleware = require('../middleware/auth');
 const logger = require('../config/logger');
 
+const isProd = process.env.NODE_ENV === 'production';
+
 function issueToken(graduate) {
   return jwt.sign(
     { user_id: graduate.id, user_type: 'graduate', phone: graduate.phone },
@@ -120,12 +122,16 @@ router.post('/register', [
       logger.warn({ fn: 'graduates.register', msg: 'Squad VA failed', error: e.message });
     }
 
+    // Accept skills as array or pre-stringified array from client
+    const skillsVal = Array.isArray(skills) ? JSON.stringify(skills)
+      : (typeof skills === 'string' && skills ? skills : null);
+
     const graduate = await Graduate.create({
       name, phone, email, password_hash,
       degree, field_of_study,
       graduation_year: graduation_year ? Number(graduation_year) : null,
       university,
-      skills: skills ? JSON.stringify(skills) : null,
+      skills: skillsVal,
       state, lga, nuban, squad_merchant_id, bvn_verified,
     });
 
@@ -600,6 +606,15 @@ router.post('/payment-link', [
  *       200:
  *         description: Credit score and breakdown
  */
+router.get('/credit', async (req, res, next) => {
+  try {
+    const result = await scoreUser(req.user.user_id, 'graduate');
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ──────────────────────────────────────────────
 // Platform balance (sum of released escrow earnings)
 // ──────────────────────────────────────────────

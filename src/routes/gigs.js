@@ -9,11 +9,17 @@ const isProd = process.env.NODE_ENV === 'production';
 const safeErr = (err) => isProd ? 'Internal server error' : err.message;
 
 // Generic auth — accepts trader, graduate, or employer JWT
+// Normalizes both JWT shapes: trader/graduate {user_id, user_type} and employer {id, type}
 function auth(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token' });
   try {
-    req.actor = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.actor = {
+      ...decoded,
+      id:   decoded.user_id   || decoded.id,
+      type: decoded.user_type || decoded.type,
+    };
     next();
   } catch { res.status(401).json({ error: 'Invalid token' }); }
 }
@@ -264,47 +270,52 @@ router.post('/:gigId/complete', auth, async (req, res) => {
       return res.json({ message: 'Work submitted. Waiting for poster to confirm.' });
     }
 
-    // Poster confirms and triggers payment release
+    // Poster confirms job done
     if (action === 'confirm' && req.actor.id === gig.poster_id) {
-      if (!worker_bank_code || !worker_account || !worker_name) {
-        return res.status(400).json({ error: 'worker_bank_code, worker_account, worker_name required for payment release' });
-      }
-
-      let workerPhone = null;
-      if (application.applicant_type === 'trader') {
-        const w = await Trader.findByPk(application.applicant_id, { attributes: ['phone'] });
-        workerPhone = w?.phone;
-      } else {
-        const w = await Graduate.findByPk(application.applicant_id, { attributes: ['phone'] });
-        workerPhone = w?.phone;
-      }
-
-      const result = await escrowService.releaseEscrow(application.escrow_id, worker_bank_code, worker_account, worker_name, workerPhone);
-
-      // Record credit event
       const escrow = await EscrowAccount.findByPk(application.escrow_id);
-      await recordCreditEvent(application.applicant_id, application.applicant_type, 'payment_received', {
-        amount: result.net_paid,
-        clientId: req.actor.id,
-        description: `Gig completed: ${gig.title}`,
-      });
 
       // Save ratings
       if (rating) {
         await application.update({ employer_rating: rating, employer_review: review });
         if (application.applicant_type === 'trader') {
           const w = await Trader.findByPk(application.applicant_id);
-          const newRating = ((Number(w.rating) * w.jobs_completed + rating) / (w.jobs_completed + 1)).toFixed(2);
-          await w.update({ rating: newRating, jobs_completed: w.jobs_completed + 1, is_available: true });
+          if (w) {
+            const newRating = ((Number(w.rating) * (w.total_jobs || 0) + rating) / ((w.total_jobs || 0) + 1)).toFixed(2);
+            await w.update({ rating: newRating, is_available: true });
+          }
         } else {
           const w = await Graduate.findByPk(application.applicant_id);
-          const newRating = ((Number(w.rating) * w.gigs_completed + rating) / (w.gigs_completed + 1)).toFixed(2);
-          await w.update({ rating: newRating, gigs_completed: w.gigs_completed + 1, is_available: true });
+          if (w) {
+            const newRating = ((Number(w.rating) * (w.total_gigs || 0) + rating) / ((w.total_gigs || 0) + 1)).toFixed(2);
+            await w.update({ rating: newRating, is_available: true });
+          }
         }
       }
 
+      // Full payout if bank details provided; otherwise just mark done
+      if (worker_bank_code && worker_account && worker_name) {
+        let workerPhone = null;
+        if (application.applicant_type === 'trader') {
+          const w = await Trader.findByPk(application.applicant_id, { attributes: ['phone'] });
+          workerPhone = w?.phone;
+        } else {
+          const w = await Graduate.findByPk(application.applicant_id, { attributes: ['phone'] });
+          workerPhone = w?.phone;
+        }
+        const result = await escrowService.releaseEscrow(application.escrow_id, worker_bank_code, worker_account, worker_name, workerPhone);
+        await recordCreditEvent(application.applicant_id, application.applicant_type, 'payment_received', {
+          amount: result.net_paid,
+          clientId: req.actor.id,
+          description: `Gig completed: ${gig.title}`,
+        });
+        await gig.update({ status: 'completed' });
+        return res.json({ message: 'Gig completed. Payment released.', net_paid: result.net_paid });
+      }
+
+      // Mark complete without immediate payout — payout via /escrow/:id/release later
+      if (escrow) await escrow.update({ status: 'work_done' });
       await gig.update({ status: 'completed' });
-      return res.json({ message: 'Gig completed. Payment released.', net_paid: result.net_paid });
+      return res.json({ message: 'Job confirmed as done. Payment pending release.', net_paid: null });
     }
 
     return res.status(400).json({ error: 'Invalid action or unauthorized' });
@@ -323,10 +334,12 @@ router.post('/:gigId/complete', auth, async (req, res) => {
  */
 router.get('/my/posted', auth, async (req, res) => {
   try {
+    const lim = Math.min(parseInt(req.query.limit) || 20, 100);
     const gigs = await GigPost.findAll({
       where: { poster_id: req.actor.id },
       include: [{ model: GigApplication, as: 'applications', attributes: ['id', 'status', 'applicant_id', 'applicant_type'] }],
       order: [['createdAt', 'DESC']],
+      limit: lim,
     });
     res.json(gigs);
   } catch (err) { res.status(500).json({ error: safeErr(err) }); }

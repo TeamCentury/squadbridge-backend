@@ -8,8 +8,11 @@ function auth(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token' });
   try {
-    req.trader = jwt.verify(token, process.env.JWT_SECRET);
-    if (req.trader.type !== 'trader') return res.status(403).json({ error: 'Traders only' });
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userType = decoded.user_type || decoded.type;
+    const userId   = decoded.user_id   || decoded.id;
+    if (userType !== 'trader') return res.status(403).json({ error: 'Traders only' });
+    req.trader = { ...decoded, id: userId, type: userType };
     next();
   } catch { res.status(401).json({ error: 'Invalid token' }); }
 }
