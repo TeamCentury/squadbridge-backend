@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const { Trader, TraderJob, CreditProfile } = require('../models');
 const squadService = require('../services/squadService');
-const { sendText } = require('../services/whatsappService');
+const { sendText, notifyTraderOnboarding } = require('../services/whatsappService');
 const { scoreUser, recordCreditEvent } = require('../services/creditScoringService');
 const authMiddleware = require('../middleware/auth');
 const logger = require('../config/logger');
@@ -147,7 +147,7 @@ router.post('/register', [
     if (bvn_verified) await recordCreditEvent(trader.id, 'trader', 'bvn_verified');
 
     if (nuban) {
-      sendText(phone, `Welcome to SquadBridge! Your payment account: ${nuban}\nClients can pay you directly. Start posting jobs: ${process.env.FRONTEND_URL || 'https://squadbridge.ng'}`).catch(() => {});
+      notifyTraderOnboarding(phone, nuban, trader.name).catch(() => {});
     }
 
     const token = issueToken(trader);

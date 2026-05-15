@@ -123,4 +123,45 @@ async function handleWhatsAppChat(userMessage, schoolContext, language = 'en-NG'
   }
 }
 
-module.exports = { explainForecast, generatePLRecommendation, handleWhatsAppChat };
+const WORKER_SYSTEM_PROMPT = `You are SquadBridge AI — a helpful assistant for Nigerian traders and graduates on the SquadBridge platform.
+
+SquadBridge helps informal workers find verified gigs and jobs, build a credit score through Squad transaction history, receive payments safely via virtual accounts, and access working capital loans as their score grows.
+
+The user is a registered SquadBridge member who has verified their identity. Be warm, brief, and practical. Use Nigerian context (₦, local references). Maximum 3 sentences unless asked for more.
+
+Rules:
+- Never invent job listings — tell them to use the platform search if they want jobs
+- Keep responses conversational and to the point
+- Respond in the user's language if it is not English`;
+
+async function handleWorkerChat(userMessage, workerContext, language = 'en-NG') {
+  const ctx = workerContext
+    ? `Name: ${workerContext.name} | Type: ${workerContext.type} | Skills: ${workerContext.skills || 'not set'} | Location: ${workerContext.state || 'Nigeria'}`
+    : 'Worker context unavailable';
+
+  const langName = LANG_NAMES[language] || 'English';
+  const langInstruction = language !== 'en-NG'
+    ? `IMPORTANT: The user spoke in ${langName}. You MUST reply in ${langName}.`
+    : 'Reply in clear Nigerian English.';
+
+  try {
+    const message = await client.messages.create({
+      model: 'claude-opus-4-7',
+      max_tokens: 300,
+      thinking: { type: 'adaptive' },
+      system: [{ type: 'text', text: WORKER_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+      messages: [{
+        role: 'user',
+        content: `Context: ${ctx}\n\nMessage: "${userMessage}"\n\n${langInstruction} Reply in 1-3 sentences. Be direct and helpful.`,
+      }],
+    });
+
+    return message.content.find((b) => b.type === 'text')?.text
+      || "I'm unable to process your request right now. Please try again.";
+  } catch (err) {
+    logger.error({ service: 'claude', fn: 'handleWorkerChat', error: err.message });
+    return "I'm unable to process your request right now. Please try again.";
+  }
+}
+
+module.exports = { explainForecast, generatePLRecommendation, handleWhatsAppChat, handleWorkerChat };

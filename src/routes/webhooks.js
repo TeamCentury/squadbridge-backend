@@ -2,11 +2,14 @@ const router = require('express').Router();
 const validateSquadSig = require('../middleware/validateSquadSig');
 const validateMetaSig = require('../middleware/validateMetaSig');
 const redis = require('../config/redis');
-const { Student, Transaction, School, Forecast, AuditLog } = require('../models');
+const { Student, Transaction, School, Forecast, AuditLog, Trader, Graduate } = require('../models');
+const { Op } = require('sequelize');
 const squadService = require('../services/squadService');
 const whatsappService = require('../services/whatsappService');
-const { transcribeAudio } = require('../services/spitchService');
-const { handleWhatsAppChat, explainForecast } = require('../services/claudeService');
+const { transcribeAudio, generateTTS } = require('../services/spitchService');
+const { handleWhatsAppChat, explainForecast, handleWorkerChat } = require('../services/claudeService');
+const { matchForUser } = require('../services/opportunityService');
+const { scoreUser } = require('../services/creditScoringService');
 const logger = require('../config/logger');
 
 // Credit protection constants
@@ -183,24 +186,8 @@ router.post('/squad/payment', validateSquadSig, async (req, res) => {
  * /webhooks/whatsapp:
  *   get:
  *     summary: WhatsApp webhook verification
- *     description: Meta Cloud API verification handshake — returns hub.challenge if token matches.
  *     tags: [Webhooks]
  *     security: []
- *     parameters:
- *       - in: query
- *         name: hub.mode
- *         schema: { type: string }
- *       - in: query
- *         name: hub.verify_token
- *         schema: { type: string }
- *       - in: query
- *         name: hub.challenge
- *         schema: { type: string }
- *     responses:
- *       200:
- *         description: Verification challenge echoed back
- *       403:
- *         description: Token mismatch
  */
 router.get('/whatsapp', (req, res) => {
   const { 'hub.mode': mode, 'hub.verify_token': token, 'hub.challenge': challenge } = req.query;
@@ -210,234 +197,316 @@ router.get('/whatsapp', (req, res) => {
   res.sendStatus(403);
 });
 
+// ── WhatsApp constants ───────────────────────────────────────────────────────
+
+const GREETINGS = ['hi', 'hello', 'hey', 'menu', 'start', 'help', 'helo', 'hai'];
+
+const SCHOOL_MENU_BUTTONS = [
+  { id: 'btn_forecast', title: 'Cash Flow' },
+  { id: 'btn_fees',     title: 'Fee Collections' },
+  { id: 'btn_pl',       title: 'P&L Report' },
+];
+const SCHOOL_FOLLOWUP = [
+  { id: 'btn_menu', title: 'Main Menu' },
+  { id: 'btn_ask',  title: 'Ask a Question' },
+];
+const WORKER_FOLLOWUP = [
+  { id: 'btn_jobs',  title: 'Find Jobs' },
+  { id: 'btn_score', title: 'My Score' },
+  { id: 'btn_menu',  title: 'Main Menu' },
+];
+
+// ── Session helpers (Redis, 30-day TTL) ─────────────────────────────────────
+
+async function getWASession(phone) {
+  try {
+    const raw = await redis.get(`wa:sess:${phone}`);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+async function setWASession(phone, updates) {
+  try {
+    const current = await getWASession(phone);
+    await redis.set(`wa:sess:${phone}`, JSON.stringify({ ...current, ...updates }), 'EX', 30 * 24 * 3600);
+  } catch {}
+}
+
+// ── User lookup ──────────────────────────────────────────────────────────────
+
+async function findUserByPhone(phone) {
+  const norm = phone.replace(/^\+234/, '0').slice(-10);
+  const like = { [Op.like]: `%${norm}` };
+  const [school, trader, graduate] = await Promise.all([
+    School.findOne({ where: { phone: like } }),
+    Trader.findOne({ where: { phone: like } }),
+    Graduate.findOne({ where: { phone: like } }),
+  ]);
+  if (school)   return { user: school,   userType: 'school' };
+  if (trader)   return { user: trader,   userType: 'trader' };
+  if (graduate) return { user: graduate, userType: 'graduate' };
+  return { user: null, userType: null };
+}
+
+// ── Intent detection (keyword-first, no API cost) ────────────────────────────
+
+function detectIntent(text) {
+  const t = text.toLowerCase();
+  if (/\b(job|work|gig|opport|find me|looking for|hire me|vacancy|intern|employ)\b/.test(t)) return 'job_search';
+  if (/\b(score|credit|loan|eligible|borrow|lending)\b/.test(t)) return 'credit_score';
+  if (/\b(balance|wallet|naira|account balance|how much)\b/.test(t)) return 'balance';
+  if (/\b(forecast|cash flow|projection|30 day|60 day|90 day)\b/.test(t)) return 'forecast';
+  if (/\b(p&l|profit|loss|income|revenue|expense|annual)\b/.test(t)) return 'pl_report';
+  if (/\b(fee|student|collection|paid|unpaid|term|invoice)\b/.test(t)) return 'fee_collections';
+  return 'general';
+}
+
+// ── Main menu ────────────────────────────────────────────────────────────────
+
+async function sendMainMenu(phone, user, userType) {
+  const name = user?.name?.split(' ')[0] || 'there';
+  if (userType === 'school') {
+    await whatsappService.sendButtons(
+      phone,
+      `Hi ${name}! 👋 Welcome to *SquadBridge*.\n\nI can give you live financial data about your school. What would you like to check?`,
+      SCHOOL_MENU_BUTTONS
+    );
+  } else {
+    await whatsappService.sendButtons(
+      phone,
+      `Hi ${name}! 👋 I'm your *SquadBridge* assistant.\n\nI can help you find jobs, check your credit score, or answer any questions. What would you like to do?`,
+      WORKER_FOLLOWUP
+    );
+  }
+}
+
+// ── Intent executor ──────────────────────────────────────────────────────────
+
+async function executeIntent(intent, user, userType, rawText, language) {
+  try {
+    if (intent === 'job_search') {
+      const opps = await matchForUser(user.id, userType, user.skills || '[]', 5);
+      if (!opps.length) {
+        const skills = (() => { try { return JSON.parse(user.skills || '[]').join(', '); } catch { return ''; } })();
+        return `No matching opportunities right now. 🔍 New gigs are posted daily — check back tomorrow!\n\nYour skills on record: ${skills || 'none set. Update your profile to improve matches.'}`;
+      }
+      const list = opps.slice(0, 3).map((o, i) =>
+        `*${i + 1}. ${o.title}*\n${o.organization || 'SquadBridge Platform'}${o.deadline ? `\nDeadline: ${o.deadline}` : ''}`
+      ).join('\n\n');
+      return `Here are your top matches 🎯\n\n${list}\n\nTap *Find Jobs* again to refresh, or ask me about any of these.`;
+    }
+
+    if (intent === 'credit_score') {
+      const profile = await scoreUser(user.id, userType);
+      const tier = profile.score >= 700 ? 'Excellent 🌟' : profile.score >= 600 ? 'Good ✅' : profile.score >= 500 ? 'Fair 📈' : 'Building 🔧';
+      const advice = profile.score >= 650
+        ? 'You qualify for working capital loans. Reply *loan* to learn more.'
+        : 'Complete more gigs and ensure payments are made on time to improve your score.';
+      return `Your SquadBridge credit score:\n\n*${profile.score}/850* — ${tier}\n\n${advice}`;
+    }
+
+    if (intent === 'balance') {
+      const balRes = await squadService.getBalance().catch(() => null);
+      const balance = balRes?.data?.balance || 0;
+      return `Your SquadBridge balance: *₦${Number(balance).toLocaleString()}*`;
+    }
+
+    if (intent === 'forecast' && userType === 'school') {
+      const forecast = await Forecast.findOne({ where: { school_id: user.id }, order: [['generated_at', 'DESC']] });
+      if (!forecast) return 'No forecast yet — your school needs at least a few transactions first. Check back after some payments come in.';
+      const explanation = await explainForecast(forecast, user.name, 0) || '';
+      return `📊 *Cash Flow Forecast for ${user.name}*\n\n30 days: ₦${Number(forecast.day30).toLocaleString()}\n60 days: ₦${Number(forecast.day60).toLocaleString()}\n90 days: ₦${Number(forecast.day90).toLocaleString()}\n\n${explanation}`;
+    }
+
+    if (intent === 'pl_report' && userType === 'school') {
+      const s = parseFloat(user.student_count || 0);
+      const f = parseFloat(user.fee_per_term || 0);
+      const sc = parseFloat(user.staff_count || 0);
+      const sa = parseFloat(user.avg_salary || 0);
+      const annual_income = f * s * 3;
+      const salary_expense = sa * sc * 12;
+      const total_expenses = salary_expense + (3000 * 0.8 * s * 12) + (2500 * 0.7 * s * 12) + (150000 * 12) + (100000 * 12);
+      const net = annual_income - total_expenses;
+      const status = net >= 0 ? `✅ Surplus of ₦${Math.abs(net).toLocaleString()}` : `⚠️ Deficit of ₦${Math.abs(net).toLocaleString()}`;
+      return `📋 *P&L Summary — ${user.name}*\n\nAnnual Income: ₦${annual_income.toLocaleString()}\nTotal Expenses: ₦${total_expenses.toLocaleString()}\nNet Position: ${status}`;
+    }
+
+    if (intent === 'fee_collections' && userType === 'school') {
+      const students = await Student.findAll({ where: { school_id: user.id } });
+      const paid     = students.filter((s) => s.fee_status === 'paid').length;
+      const partial  = students.filter((s) => s.fee_status === 'partial').length;
+      const unpaid   = students.filter((s) => s.fee_status === 'unpaid').length;
+      const collected = students.reduce((sum, s) => sum + parseFloat(s.amount_paid || 0), 0);
+      const expected  = students.reduce((sum, s) => sum + parseFloat(s.fee_amount || 0), 0);
+      return `💰 *Fee Collections — ${user.name}*\n\n✅ Paid: ${paid}\n⏳ Partial: ${partial}\n❌ Unpaid: ${unpaid}\n\nCollected: ₦${collected.toLocaleString()} of ₦${expected.toLocaleString()}`;
+    }
+
+    // General — Claude AI (user-type-aware)
+    if (userType === 'school') {
+      const ctx = { name: user.name, student_count: user.student_count, fee_per_term: user.fee_per_term, balance: 0 };
+      return await handleWhatsAppChat(rawText, ctx, language);
+    }
+    const workerCtx = { name: user.name, type: userType, skills: user.skills, state: user.state };
+    return await handleWorkerChat(rawText, workerCtx, language);
+  } catch (err) {
+    logger.error({ fn: 'wa.executeIntent', intent, userType, error: err.message });
+    return "I'm having trouble with that right now. Please try again.";
+  }
+}
+
 /**
  * @swagger
  * /webhooks/whatsapp:
  *   post:
- *     summary: Incoming WhatsApp messages
- *     description: |
- *       Receives messages from WhatsApp Business API. Looks up the school by sender phone number
- *       and uses Claude AI to generate a contextual reply.
+ *     summary: Incoming WhatsApp messages — unified handler for all user types
  *     tags: [Webhooks]
  *     security: []
- *     responses:
- *       200:
- *         description: Message processed
  */
-const GREETINGS = ['hi', 'hello', 'hey', 'menu', 'start', 'help', 'helo', 'hai'];
-const MAIN_MENU_BUTTONS = [
-  { id: 'btn_forecast', title: 'Cash Flow Forecast' },
-  { id: 'btn_pl',       title: 'P&L Report' },
-  { id: 'btn_fees',     title: 'Fee Collections' },
-];
-const FOLLOWUP_BUTTONS = [
-  { id: 'btn_menu',     title: 'Main Menu' },
-  { id: 'btn_ask',      title: 'Ask a Question' },
-];
-
-async function sendMainMenu(phone, school) {
-  const name = school?.name || 'there';
-  await whatsappService.sendButtons(
-    phone,
-    `Hi ${name}! 👋 Welcome to *SquadBridge*.\n\nI can give you live financial data about your school. What would you like to check?`,
-    MAIN_MENU_BUTTONS
-  );
-}
-
-async function handleButtonAction(buttonId, phone, school) {
-  if (buttonId === 'btn_menu' || buttonId === 'btn_ask') {
-    return sendMainMenu(phone, school);
-  }
-
-  if (!school) {
-    await whatsappService.sendButtons(
-      phone,
-      'Your phone number is not linked to a SquadBridge school. Please onboard at squadbridge.com or contact support.',
-      [{ id: 'btn_menu', title: 'Main Menu' }]
-    );
-    return;
-  }
-
-  if (buttonId === 'btn_forecast') {
-    const forecast = await Forecast.findOne({ where: { school_id: school.id }, order: [['generated_at', 'DESC']] });
-    if (!forecast) {
-      await whatsappService.sendButtons(
-        phone,
-        'No forecast yet — your school needs at least a few transactions first. Check back after some payments come in.',
-        [{ id: 'btn_menu', title: 'Main Menu' }]
-      );
-      return;
-    }
-    const explanation = await explainForecast(forecast, school.name, 0) || 'Forecast data retrieved.';
-    await whatsappService.sendText(phone, `📊 *Cash Flow Forecast for ${school.name}*\n\n30 days: ₦${Number(forecast.day30).toLocaleString()}\n60 days: ₦${Number(forecast.day60).toLocaleString()}\n90 days: ₦${Number(forecast.day90).toLocaleString()}\n\n${explanation}`);
-    await whatsappService.sendButtons(phone, 'What would you like to do next?', FOLLOWUP_BUTTONS);
-    return;
-  }
-
-  if (buttonId === 'btn_pl') {
-    const s = parseFloat(school.student_count);
-    const f = parseFloat(school.fee_per_term);
-    const sc = parseFloat(school.staff_count);
-    const sa = parseFloat(school.avg_salary);
-    const annual_income = f * s * 3;
-    const salary_expense = sa * sc * 12;
-    const total_expenses = salary_expense + (3000 * 0.8 * s * 12) + (2500 * 0.7 * s * 12) + (150000 * 12) + (100000 * 12);
-    const net = annual_income - total_expenses;
-    const status = net >= 0 ? `✅ Surplus of ₦${Math.abs(net).toLocaleString()}` : `⚠️ Deficit of ₦${Math.abs(net).toLocaleString()}`;
-    await whatsappService.sendText(phone, `📋 *P&L Summary — ${school.name}*\n\nAnnual Income: ₦${annual_income.toLocaleString()}\nTotal Expenses: ₦${total_expenses.toLocaleString()}\nNet Position: ${status}`);
-    await whatsappService.sendButtons(phone, 'Would you like an AI recommendation on this?', [
-      { id: 'btn_pl_ai', title: 'Get Recommendation' },
-      { id: 'btn_menu',  title: 'Main Menu' },
-    ]);
-    return;
-  }
-
-  if (buttonId === 'btn_pl_ai') {
-    const s = parseFloat(school.student_count);
-    const f = parseFloat(school.fee_per_term);
-    const sc = parseFloat(school.staff_count);
-    const sa = parseFloat(school.avg_salary);
-    const annual_income = f * s * 3;
-    const salary_expense = sa * sc * 12;
-    const total_expenses = salary_expense + (3000 * 0.8 * s * 12) + (2500 * 0.7 * s * 12) + (150000 * 12) + (100000 * 12);
-    const net_position = annual_income - total_expenses;
-    const { generatePLRecommendation } = require('../services/claudeService');
-    const rec = await generatePLRecommendation({ annual_income, total_expenses, net_position, salary_expense, student_count: s, fee_per_term: f, staff_count: sc }, school.name);
-    await whatsappService.sendText(phone, `🤖 *AI Analysis*\n\n${rec || 'Unable to generate recommendation right now.'}`);
-    await whatsappService.sendButtons(phone, 'What would you like to do next?', FOLLOWUP_BUTTONS);
-    return;
-  }
-
-  if (buttonId === 'btn_fees') {
-    const students = await Student.findAll({ where: { school_id: school.id } });
-    const paid = students.filter(s => s.fee_status === 'paid').length;
-    const partial = students.filter(s => s.fee_status === 'partial').length;
-    const unpaid = students.filter(s => s.fee_status === 'unpaid').length;
-    const totalCollected = students.reduce((sum, s) => sum + parseFloat(s.amount_paid || 0), 0);
-    const totalExpected = students.reduce((sum, s) => sum + parseFloat(s.fee_amount || 0), 0);
-    await whatsappService.sendText(
-      phone,
-      `💰 *Fee Collections — ${school.name}*\n\n✅ Fully paid: ${paid} students\n⏳ Partial: ${partial} students\n❌ Unpaid: ${unpaid} students\n\nCollected: ₦${totalCollected.toLocaleString()} of ₦${totalExpected.toLocaleString()}`
-    );
-    await whatsappService.sendButtons(phone, 'What would you like to do next?', FOLLOWUP_BUTTONS);
-    return;
-  }
-}
-
 router.post('/whatsapp', validateMetaSig, async (req, res) => {
   res.sendStatus(200);
 
   try {
-    const entry = req.body?.entry?.[0];
-    const change = entry?.changes?.[0];
-    const message = change?.value?.messages?.[0];
-
+    const message = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
     if (!message) return;
 
     const senderPhone = `+${message.from}`;
-
     await whatsappService.markAsRead(message.id);
     await whatsappService.showTyping(message.id);
 
-    // ── Voice note handling ──────────────────────────────────────────────────
+    const { user, userType } = await findUserByPhone(senderPhone);
+
+    // ── Unregistered user ────────────────────────────────────────────────────
+    if (!user) {
+      const bodyText = message.text?.body?.trim().toLowerCase() || '';
+      if (GREETINGS.includes(bodyText)) {
+        await whatsappService.sendText(
+          senderPhone,
+          `👋 Hi! I'm the *SquadBridge* assistant.\n\nSquadBridge connects traders, graduates, and businesses across Nigeria.\n\n` +
+          `• *Trader or Graduate?* Register at ${process.env.FRONTEND_URL}/onboarding — takes 2 minutes.\n` +
+          `• *School or business?* Same link — you'll get your own financial dashboard here.\n` +
+          `• *Already registered?* Make sure you signed up with this phone number.`
+        );
+      } else {
+        await whatsappService.sendText(
+          senderPhone,
+          `I don't have your number on record yet. 📋\n\nComplete registration at ${process.env.FRONTEND_URL}/onboarding, then come back here to chat!`
+        );
+      }
+      return;
+    }
+
+    const session = await getWASession(senderPhone);
+    let userText = '';
+    let isVoiceMessage = false;
+    let language = session.language || 'en-NG';
+
+    // ── Voice note ───────────────────────────────────────────────────────────
     if (message.type === 'audio') {
       const quota = await checkVoiceQuota(senderPhone);
       if (!quota.allowed) {
-        const msg = quota.reason === 'global'
-          ? 'Our voice service is at capacity for today. Please type your question instead.'
-          : `You've used your ${VOICE_DAILY_PER_USER} voice messages for today. Type your question and I'll still help!`;
-        await whatsappService.sendText(senderPhone, msg);
+        await whatsappService.sendText(
+          senderPhone,
+          quota.reason === 'global'
+            ? 'Our voice service is at capacity for today. Please type your message instead.'
+            : `You've used your ${VOICE_DAILY_PER_USER} voice messages for today. Type your question and I'll still help!`
+        );
         return;
       }
 
       const { buffer, mimeType } = await whatsappService.downloadMedia(message.audio.id);
       const stt = await transcribeAudio(buffer, mimeType);
-
       if (!stt?.transcript) {
         await whatsappService.sendText(senderPhone, "Sorry, I couldn't make out that voice note. Could you try again or type your question?");
         return;
       }
 
-      const detectedLang = stt.language || 'en-NG';
-      const school = await School.findOne({ where: { phone: senderPhone } });
-      const schoolCtx = school
-        ? { name: school.name, student_count: school.student_count, fee_per_term: school.fee_per_term, balance: 0 }
-        : null;
+      userText = stt.transcript;
+      isVoiceMessage = true;
+      language = stt.language || language;
+      await setWASession(senderPhone, { language });
 
-      const reply = await handleWhatsAppChat(stt.transcript, schoolCtx, detectedLang);
-
-      // Claude handles the transcript and returns the user-facing answer.
-      // Keep the WhatsApp response text-only so replies do not go back through Spitch TTS.
-      await whatsappService.sendText(senderPhone, `🎤 _You said:_ "${stt.transcript}"\n\n${reply}`);
-      await whatsappService.sendButtons(senderPhone, 'What would you like to do next?', FOLLOWUP_BUTTONS);
-
-      logger.info({ event: 'whatsapp_voice', from: senderPhone, lang: detectedLang, school: school?.name });
-      return;
-    }
-    // ────────────────────────────────────────────────────────────────────────
-
-    // Extract text or button selection
-    let userText = '';
-    let buttonId = null;
-
-    if (message.type === 'text') {
-      userText = message.text?.body?.trim() || '';
-    } else if (message.type === 'interactive') {
-      const ir = message.interactive;
-      if (ir.type === 'button_reply') {
-        buttonId = ir.button_reply.id;
-        userText = ir.button_reply.title;
-      } else if (ir.type === 'list_reply') {
-        buttonId = ir.list_reply.id;
-        userText = ir.list_reply.title;
+      // First voice note — ask reply format preference, hold transcript
+      if (!session.reply_format) {
+        await setWASession(senderPhone, { pending_transcript: userText, pending_language: language });
+        await whatsappService.sendText(
+          senderPhone,
+          `🎤 _You said:_ "${userText.slice(0, 120)}${userText.length > 120 ? '...' : ''}"\n\nHow would you like my replies?\n\n*1* — Voice notes 🎤\n*2* — Text messages 📝`
+        );
+        return;
       }
     }
 
-    if (!userText && !buttonId) return;
+    // ── Text message ─────────────────────────────────────────────────────────
+    else if (message.type === 'text') {
+      userText = message.text?.body?.trim() || '';
 
-    const school = await School.findOne({ where: { phone: senderPhone } });
+      // Handle reply-format preference response
+      if (session.pending_transcript && (userText === '1' || userText === '2')) {
+        const format = userText === '1' ? 'voice' : 'text';
+        const pendingText = session.pending_transcript;
+        const pendingLang = session.pending_language || language;
+        await setWASession(senderPhone, { reply_format: format, pending_transcript: null, pending_language: null });
+        userText = pendingText;
+        isVoiceMessage = format === 'voice';
+        language = pendingLang;
+      }
+    }
 
-    // Unknown number — politely explain what SquadBridge is
-    if (!school && !buttonId && GREETINGS.includes(userText.toLowerCase())) {
-      await whatsappService.sendText(
-        senderPhone,
-        `👋 Hi! I'm the *SquadBridge* assistant.\n\nSquadBridge helps Nigerian schools automate fee collection, payroll, and cash flow management.\n\n` +
-        `• *School administrator?* Register your school at squadbridge.com to access your financial dashboard here.\n` +
-        `• *Parent paying fees?* Ask your school bursar for your personalised payment link.\n` +
-        `• *Questions?* Email support@squadbridge.com`
-      );
+    // ── Interactive (button tap) ─────────────────────────────────────────────
+    else if (message.type === 'interactive') {
+      const ir = message.interactive;
+      const buttonId = ir.type === 'button_reply' ? ir.button_reply?.id : ir.list_reply?.id;
+      const buttonTitle = ir.type === 'button_reply' ? ir.button_reply?.title : ir.list_reply?.title;
+
+      if (buttonId === 'btn_menu' || buttonId === 'btn_ask') {
+        await sendMainMenu(senderPhone, user, userType);
+        return;
+      }
+      const intentMap = {
+        btn_jobs:     'find me jobs',
+        btn_score:    'what is my credit score',
+        btn_forecast: 'cash flow forecast',
+        btn_fees:     'fee collections summary',
+        btn_pl:       'show p&l report',
+      };
+      userText = intentMap[buttonId] || buttonTitle || '';
+    }
+
+    if (!userText) return;
+
+    // ── Greeting → main menu ─────────────────────────────────────────────────
+    if (GREETINGS.includes(userText.toLowerCase())) {
+      await sendMainMenu(senderPhone, user, userType);
       return;
     }
 
-    // Route: greeting → main menu
-    if (GREETINGS.includes(userText.toLowerCase()) || buttonId === 'btn_menu') {
-      await sendMainMenu(senderPhone, school);
-      logger.info({ event: 'whatsapp_menu', from: senderPhone });
-      return;
+    // ── Detect intent and execute ────────────────────────────────────────────
+    const intent = detectIntent(userText);
+    const replyText = await executeIntent(intent, user, userType, userText, language);
+
+    // ── Send reply (voice or text based on stored preference) ────────────────
+    const replyFormat = session.reply_format || 'text';
+    if (isVoiceMessage && replyFormat === 'voice') {
+      const tts = await generateTTS(replyText, language).catch(() => null);
+      if (tts?.audio_url) {
+        await whatsappService.sendAudio(senderPhone, tts.audio_url);
+      } else {
+        // TTS failed — fall back to text with transcript header
+        await whatsappService.sendText(senderPhone, `🎤 _You said:_ "${userText}"\n\n${replyText}`);
+      }
+    } else {
+      // For voice-in text-out, show transcript so the user knows it was understood
+      const prefix = isVoiceMessage ? `🎤 _You said:_ "${userText}"\n\n` : '';
+      await whatsappService.sendText(senderPhone, `${prefix}${replyText}`);
     }
 
-    // Route: button tap → dedicated handler
-    if (buttonId) {
-      await handleButtonAction(buttonId, senderPhone, school);
-      logger.info({ event: 'whatsapp_button', from: senderPhone, buttonId });
-      return;
+    // Follow-up buttons (skip after audio reply — buttons don't render on audio messages)
+    if (!(isVoiceMessage && replyFormat === 'voice')) {
+      const followup = userType === 'school' ? SCHOOL_FOLLOWUP : WORKER_FOLLOWUP;
+      await whatsappService.sendButtons(senderPhone, 'What would you like to do next?', followup);
     }
 
-    // Route: free text → Claude (school users only) or onboarding nudge
-    if (!school) {
-      await whatsappService.sendText(
-        senderPhone,
-        `I don't have your school on record yet. 🏫\n\nTo use SquadBridge:\n1. Register at squadbridge.com\n2. Use the same phone number you sign up with\n\nOnce registered, text *menu* to get started.\n\nFor help: support@squadbridge.com`
-      );
-      return;
-    }
-
-    const schoolContext = { name: school.name, student_count: school.student_count, fee_per_term: school.fee_per_term, balance: 0 };
-    const reply = await handleWhatsAppChat(userText, schoolContext);
-    await whatsappService.sendText(senderPhone, reply);
-    await whatsappService.sendButtons(senderPhone, 'What would you like to do next?', FOLLOWUP_BUTTONS);
-
-    logger.info({ event: 'whatsapp_chat', from: senderPhone, school: school?.name });
+    logger.info({ event: 'whatsapp_msg', from: senderPhone, userType, intent, isVoice: isVoiceMessage });
   } catch (err) {
     logger.error(`whatsapp_webhook_error: ${err.message}`, { stack: err.stack, response: err.response?.data });
   }

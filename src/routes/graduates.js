@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const { Graduate, GraduateGig, CreditProfile } = require('../models');
 const squadService = require('../services/squadService');
-const { sendText } = require('../services/whatsappService');
+const { sendText, notifyGraduateOnboarding } = require('../services/whatsappService');
 const { scoreUser, recordCreditEvent } = require('../services/creditScoringService');
 const authMiddleware = require('../middleware/auth');
 const logger = require('../config/logger');
@@ -139,7 +139,7 @@ router.post('/register', [
     if (bvn_verified) await recordCreditEvent(graduate.id, 'graduate', 'bvn_verified');
 
     if (nuban) {
-      sendText(phone, `Welcome to SquadBridge! Your earnings account: ${nuban}\nClients can pay you for gigs. Start listing: ${process.env.FRONTEND_URL || 'https://squadbridge.ng'}`).catch(() => {});
+      notifyGraduateOnboarding(phone, nuban, graduate.name).catch(() => {});
     }
 
     const token = issueToken(graduate);

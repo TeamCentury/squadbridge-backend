@@ -156,6 +156,22 @@ function notifyOnboarding(phone, nuban) {
   return sendText(phone, `Welcome to SquadBridge! Your account number: ${nuban}. Log in: ${process.env.FRONTEND_URL}`);
 }
 
+function notifyTraderOnboarding(phone, nuban, name) {
+  const firstName = (name || 'there').split(' ')[0];
+  return sendText(
+    phone,
+    `Welcome to SquadBridge, ${firstName}! 🎉\n\nYour payment account: *${nuban}* (GTBank)\n\nYou're all set. You can now use this chat to:\n• Type *jobs* — find work matching your skills\n• Type *score* — check your credit rating\n• Ask me anything about gigs or payments\n\nI'm here anytime — just send a message! 👋`
+  );
+}
+
+function notifyGraduateOnboarding(phone, nuban, name) {
+  const firstName = (name || 'there').split(' ')[0];
+  return sendText(
+    phone,
+    `Welcome to SquadBridge, ${firstName}! 🎓\n\nYour payment account: *${nuban}* (GTBank)\n\nYou'll receive daily opportunity updates here every morning at 8am. You can also:\n• Type *jobs* — search for opportunities now\n• Type *score* — check your credit score\n• Ask me anything — I'm your SquadBridge assistant\n\nLet's get you earning! 🚀`
+  );
+}
+
 module.exports = {
   sendMessage,
   sendText,
@@ -168,4 +184,6 @@ module.exports = {
   notifyPayrollComplete,
   notifyForecastAlert,
   notifyOnboarding,
+  notifyTraderOnboarding,
+  notifyGraduateOnboarding,
 };
