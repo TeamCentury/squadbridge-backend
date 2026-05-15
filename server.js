@@ -58,7 +58,7 @@ async function start() {
       await sequelize.sync({ force: false });
       logger.info('Database synced');
     } catch (syncErr) {
-      logger.warn(`DB sync warning (tables may already exist): ${syncErr.message || syncErr.name || JSON.stringify(syncErr)}`);
+      logger.error(`DB sync failed: ${syncErr.message || JSON.stringify(syncErr)}`);
     }
   } catch (err) {
     logger.warn(`Database unavailable: ${err.message} — API routes requiring DB will return 500 until connected`);

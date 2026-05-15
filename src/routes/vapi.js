@@ -207,7 +207,7 @@ router.post('/call-end', async (req, res) => {
     res.json({ received: true });
   } catch (err) {
     logger.error({ fn: 'vapi.call-end', error: err.message });
-    res.status(500).json({ error: err.message });
+    res.json({ received: true });
   }
 });
 
