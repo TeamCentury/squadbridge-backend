@@ -67,7 +67,7 @@ router.post('/register', async (req, res) => {
     }
 
     const token = jwt.sign({ id: employer.id, type: 'employer' }, process.env.JWT_SECRET, { expiresIn: '30d' });
-    res.status(201).json({ message: 'Employer registered', token, employer: { id: employer.id, name: employer.name, email: employer.email, squad_virtual_account: employer.squad_virtual_account } });
+    res.status(201).json({ message: 'Employer registered', token, employer_id: employer.id, employer: { id: employer.id, name: employer.name, email: employer.email, squad_virtual_account: employer.squad_virtual_account } });
   } catch (err) {
     logger.error({ fn: 'employers.register', error: err.message });
     res.status(500).json({ error: safeErr(err) });
@@ -90,7 +90,7 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     const token = jwt.sign({ id: employer.id, type: 'employer' }, process.env.JWT_SECRET, { expiresIn: '30d' });
-    res.json({ token, employer: { id: employer.id, name: employer.name, email: employer.email, business_name: employer.business_name } });
+    res.json({ token, employer_id: employer.id, employer: { id: employer.id, name: employer.name, email: employer.email, business_name: employer.business_name } });
   } catch (err) {
     res.status(500).json({ error: safeErr(err) });
   }
