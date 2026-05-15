@@ -1,6 +1,7 @@
 const router = require('express').Router();
-const { School, Student } = require('../models');
+const { School, Student, Trader, Graduate } = require('../models');
 const squadService = require('../services/squadService');
+const { scoreUser } = require('../services/creditScoringService');
 const { continueSession, endSession, MAIN_MENU } = require('../services/atService');
 
 /**
@@ -105,6 +106,25 @@ router.post('/callback', async (req, res) => {
 
     if (level1 === '4') {
       return res.send(endSession(`SquadBridge Help\nWeb: ${process.env.FRONTEND_URL}\nEmail: support@squadbridge.com`));
+    }
+
+    if (level1 === '5') {
+      // Credit score — look up by phone across trader/graduate
+      const normalized = phoneNumber?.replace(/^\+234/, '0');
+      let user = null; let userType = 'trader';
+      const trader = await Trader.findOne({ where: { phone: normalized } });
+      if (trader) { user = trader; userType = 'trader'; }
+      if (!user) {
+        const grad = await Graduate.findOne({ where: { phone: normalized } });
+        if (grad) { user = grad; userType = 'graduate'; }
+      }
+      if (!user) {
+        return res.send(endSession('Phone not registered on SquadBridge.\nSend "JOIN" on WhatsApp to get started.'));
+      }
+      const profile = await scoreUser(user.id, userType).catch(() => null);
+      const score = profile?.score || 0;
+      const tier = score >= 700 ? 'Excellent' : score >= 600 ? 'Good' : score >= 500 ? 'Fair' : 'Building';
+      return res.send(endSession(`SquadBridge Credit Score\n\nScore: ${score}/850\nTier: ${tier}\n\nComplete more jobs to improve.`));
     }
 
     if (level1 === '0') return res.send(endSession('Thank you for using SquadBridge. Goodbye!'));

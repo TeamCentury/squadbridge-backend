@@ -9,6 +9,7 @@ const swaggerSpec = require('./config/swagger');
 
 const { rateLimiter, webhookLimiter } = require('./middleware/rateLimiter');
 const authMiddleware = require('./middleware/auth');
+const requireSchoolOwnership = require('./middleware/requireSchoolOwnership');
 const errorHandler = require('./middleware/errorHandler');
 
 const authRoutes = require('./routes/auth');
@@ -23,6 +24,12 @@ const auditRoutes = require('./routes/auditLog');
 const adminRoutes = require('./routes/admin');
 const traderRoutes = require('./routes/traders');
 const graduateRoutes = require('./routes/graduates');
+const employerRoutes = require('./routes/employers');
+const gigRoutes = require('./routes/gigs');
+const badgeRoutes = require('./routes/badges');
+const vapiRoutes = require('./routes/vapi');
+const twilioRoutes = require('./routes/twilio');
+const opportunityRoutes = require('./routes/opportunities');
 
 const path = require('path');
 
@@ -107,20 +114,31 @@ app.get('/privacy', (req, res) => {
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', adminRoutes);
 
-// Phase 2 — Trader/Artisan (auth endpoints are public, protected ones use middleware internally)
+// Phase 2 — Trader/Artisan
 app.use('/api/v1/traders', traderRoutes);
 
-// Phase 3 — Graduate (same pattern)
+// Phase 3 — Graduate
 app.use('/api/v1/graduates', graduateRoutes);
+
+// Phase 4 — Employers, Gig Marketplace, Badges, Opportunities
+app.use('/api/v1/employers', employerRoutes);
+app.use('/api/v1/gigs', gigRoutes);
+app.use('/api/v1/badges', badgeRoutes);
+app.use('/api/v1/opportunities', opportunityRoutes);
+
+// Voice channels
+app.use('/api/v1/vapi', vapiRoutes);
+app.use('/api/v1/twilio', twilioRoutes);
+
 app.use('/ussd', ussdRoutes);
 app.use('/webhooks', webhookRoutes);
 
-// Protected routes
+// Protected routes — auth + ownership check on all /:id sub-routes
 app.use('/api/v1/schools', authMiddleware, schoolRoutes);
-app.use('/api/v1/schools/:id/payment-links', authMiddleware, paymentLinkRoutes);
-app.use('/api/v1/schools/:id/payroll', authMiddleware, payrollRoutes);
-app.use('/api/v1/schools/:id/forecast', authMiddleware, forecastRoutes);
-app.use('/api/v1/schools/:id/audit', authMiddleware, auditRoutes);
+app.use('/api/v1/schools/:id/payment-links', authMiddleware, requireSchoolOwnership, paymentLinkRoutes);
+app.use('/api/v1/schools/:id/payroll', authMiddleware, requireSchoolOwnership, payrollRoutes);
+app.use('/api/v1/schools/:id/forecast', authMiddleware, requireSchoolOwnership, forecastRoutes);
+app.use('/api/v1/schools/:id/audit', authMiddleware, requireSchoolOwnership, auditRoutes);
 app.use('/api/v1/voice', authMiddleware, voiceRoutes);
 
 // 404 handler

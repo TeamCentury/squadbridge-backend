@@ -13,54 +13,62 @@ const Graduate = require('./Graduate');
 const GraduateGig = require('./GraduateGig');
 const CreditProfile = require('./CreditProfile');
 const CreditEvent = require('./CreditEvent');
+const Employer = require('./Employer');
+const EscrowAccount = require('./EscrowAccount');
+const GigPost = require('./GigPost');
+const GigApplication = require('./GigApplication');
+const TraderBadge = require('./TraderBadge');
+const OpportunityPool = require('./OpportunityPool');
+const OpportunitySent = require('./OpportunitySent');
+const ConversationSession = require('./ConversationSession');
 
-// Associations
-School.hasMany(Student, { foreignKey: 'school_id', as: 'students' });
-Student.belongsTo(School, { foreignKey: 'school_id' });
-
-School.hasMany(Transaction, { foreignKey: 'school_id', as: 'transactions' });
+// ─── School associations ───────────────────────────────────────────────────
+School.hasMany(Student,       { foreignKey: 'school_id', as: 'students' });
+Student.belongsTo(School,     { foreignKey: 'school_id' });
+School.hasMany(Transaction,   { foreignKey: 'school_id', as: 'transactions' });
 Transaction.belongsTo(School, { foreignKey: 'school_id' });
+Student.hasMany(Transaction,  { foreignKey: 'student_id', as: 'transactions' });
+Transaction.belongsTo(Student,{ foreignKey: 'student_id' });
+School.hasOne(PayrollConfig,  { foreignKey: 'school_id', as: 'payrollConfig' });
+PayrollConfig.belongsTo(School,{ foreignKey: 'school_id' });
+School.hasMany(PayrollStaff,  { foreignKey: 'school_id', as: 'staff' });
+PayrollStaff.belongsTo(School,{ foreignKey: 'school_id' });
+School.hasMany(PayrollLog,    { foreignKey: 'school_id', as: 'payrollLogs' });
+PayrollLog.belongsTo(School,  { foreignKey: 'school_id' });
+School.hasMany(Forecast,      { foreignKey: 'school_id', as: 'forecasts' });
+Forecast.belongsTo(School,    { foreignKey: 'school_id' });
+School.hasMany(AuditLog,      { foreignKey: 'school_id', as: 'auditLogs' });
+AuditLog.belongsTo(School,    { foreignKey: 'school_id' });
 
-Student.hasMany(Transaction, { foreignKey: 'student_id', as: 'transactions' });
-Transaction.belongsTo(Student, { foreignKey: 'student_id' });
+// ─── Trader associations ───────────────────────────────────────────────────
+Trader.hasMany(TraderJob,     { foreignKey: 'trader_id', as: 'jobs' });
+TraderJob.belongsTo(Trader,   { foreignKey: 'trader_id' });
+Trader.hasMany(TraderBadge,   { foreignKey: 'trader_id', as: 'badges' });
+TraderBadge.belongsTo(Trader, { foreignKey: 'trader_id' });
 
-School.hasOne(PayrollConfig, { foreignKey: 'school_id', as: 'payrollConfig' });
-PayrollConfig.belongsTo(School, { foreignKey: 'school_id' });
-
-School.hasMany(PayrollStaff, { foreignKey: 'school_id', as: 'staff' });
-PayrollStaff.belongsTo(School, { foreignKey: 'school_id' });
-
-School.hasMany(PayrollLog, { foreignKey: 'school_id', as: 'payrollLogs' });
-PayrollLog.belongsTo(School, { foreignKey: 'school_id' });
-
-School.hasMany(Forecast, { foreignKey: 'school_id', as: 'forecasts' });
-Forecast.belongsTo(School, { foreignKey: 'school_id' });
-
-School.hasMany(AuditLog, { foreignKey: 'school_id', as: 'auditLogs' });
-AuditLog.belongsTo(School, { foreignKey: 'school_id' });
-
-// Trader associations
-Trader.hasMany(TraderJob, { foreignKey: 'trader_id', as: 'jobs' });
-TraderJob.belongsTo(Trader, { foreignKey: 'trader_id' });
-
-// Graduate associations
+// ─── Graduate associations ─────────────────────────────────────────────────
 Graduate.hasMany(GraduateGig, { foreignKey: 'graduate_id', as: 'gigs' });
-GraduateGig.belongsTo(Graduate, { foreignKey: 'graduate_id' });
+GraduateGig.belongsTo(Graduate,{ foreignKey: 'graduate_id' });
+
+// ─── Gig marketplace associations ─────────────────────────────────────────
+GigPost.hasMany(GigApplication,     { foreignKey: 'gig_post_id', as: 'applications' });
+GigApplication.belongsTo(GigPost,   { foreignKey: 'gig_post_id', as: 'gigPost' });
+
+// ─── Opportunity associations ─────────────────────────────────────────────
+OpportunityPool.hasMany(OpportunitySent, { foreignKey: 'opportunity_id', as: 'sentTo' });
+OpportunitySent.belongsTo(OpportunityPool, { foreignKey: 'opportunity_id' });
 
 module.exports = {
   sequelize,
-  School,
-  Student,
-  Transaction,
-  PayrollConfig,
-  PayrollStaff,
-  PayrollLog,
-  Forecast,
-  AuditLog,
-  Trader,
-  TraderJob,
-  Graduate,
-  GraduateGig,
-  CreditProfile,
-  CreditEvent,
+  School, Student, Transaction,
+  PayrollConfig, PayrollStaff, PayrollLog,
+  Forecast, AuditLog,
+  Trader, TraderJob, TraderBadge,
+  Graduate, GraduateGig,
+  CreditProfile, CreditEvent,
+  Employer,
+  EscrowAccount,
+  GigPost, GigApplication,
+  OpportunityPool, OpportunitySent,
+  ConversationSession,
 };

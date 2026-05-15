@@ -34,7 +34,7 @@ function endSession(message) {
 }
 
 const MAIN_MENU = continueSession(
-  'Welcome to SquadBridge\n1. Check Balance\n2. Collections Summary\n3. Request Payout\n4. Help\n0. Exit'
+  'Welcome to SquadBridge\n1. Check Balance\n2. Collections Summary\n3. Request Payout\n4. Help\n5. My Credit Score\n0. Exit'
 );
 
 module.exports = { sendSMS, continueSession, endSession, MAIN_MENU };
