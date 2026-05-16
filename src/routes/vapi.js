@@ -211,12 +211,12 @@ async function executeTool(fnName, args, phone) {
     }
     const apps = await GigApplication.findAll({
       where: { applicant_id: user.id },
-      include: [{ model: GigPost, as: 'gig', attributes: ['title', 'budget_fixed'] }],
+      include: [{ model: GigPost, as: 'gigPost', attributes: ['title', 'budget_fixed'] }],
       limit: 5,
       order: [['createdAt', 'DESC']],
     });
     if (!apps.length) return "You don't have any gig applications yet. Would you like me to find open opportunities for you?";
-    const summary = apps.map((a) => `${a.gig?.title || 'a gig'}: ${a.status}`).join('. ');
+    const summary = apps.map((a) => `${a.gigPost?.title || 'a gig'}: ${a.status}`).join('. ');
     return `You have ${apps.length} recent application${apps.length > 1 ? 's' : ''}: ${summary}.`;
   }
 
@@ -226,10 +226,10 @@ async function executeTool(fnName, args, phone) {
     }
     const gig = await GigPost.findByPk(args.gig_id);
     if (!gig || gig.status !== 'open') return 'That gig is no longer available. Would you like me to find other open gigs?';
-    const existing = await GigApplication.findOne({ where: { gig_id: args.gig_id, applicant_id: user.id } });
+    const existing = await GigApplication.findOne({ where: { gig_post_id: args.gig_id, applicant_id: user.id } });
     if (existing) return `You've already applied for "${gig.title}". I'll let you know when there's an update.`;
     await GigApplication.create({
-      gig_id: args.gig_id,
+      gig_post_id: args.gig_id,
       applicant_id: user.id,
       applicant_type: userType,
       status: 'pending',

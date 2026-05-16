@@ -27,8 +27,10 @@ School.hasMany(Student,       { foreignKey: 'school_id', as: 'students' });
 Student.belongsTo(School,     { foreignKey: 'school_id' });
 School.hasMany(Transaction,   { foreignKey: 'school_id', as: 'transactions' });
 Transaction.belongsTo(School, { foreignKey: 'school_id' });
-Student.hasMany(Transaction,  { foreignKey: 'student_id', as: 'transactions' });
-Transaction.belongsTo(Student,{ foreignKey: 'student_id' });
+// NO ACTION avoids SQL Server "multiple cascade paths" error:
+// School→Student→Transaction (via student_id) would conflict with School→Transaction (via school_id)
+Student.hasMany(Transaction,  { foreignKey: 'student_id', as: 'transactions', onDelete: 'NO ACTION' });
+Transaction.belongsTo(Student,{ foreignKey: 'student_id', onDelete: 'NO ACTION' });
 School.hasOne(PayrollConfig,  { foreignKey: 'school_id', as: 'payrollConfig' });
 PayrollConfig.belongsTo(School,{ foreignKey: 'school_id' });
 School.hasMany(PayrollStaff,  { foreignKey: 'school_id', as: 'staff' });

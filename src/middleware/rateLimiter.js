@@ -9,6 +9,9 @@ const rateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator,
+  // VAPI webhook is already secured by validateVapiSecret — skip rate limiting so
+  // burst events (status-update, tool-calls, end-of-call) aren't blocked with 429
+  skip: (req) => req.path.startsWith('/v1/vapi'),
   message: { error: 'Too many requests, please try again later.' },
 });
 
