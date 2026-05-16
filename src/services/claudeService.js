@@ -164,6 +164,36 @@ async function handleWorkerChat(userMessage, workerContext, language = 'en-NG') 
   }
 }
 
+async function parseCVText(cvText) {
+  try {
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 400,
+      messages: [{
+        role: 'user',
+        content: `Extract structured profile data from this Nigerian worker's CV or self-description. Return JSON only (no markdown):
+{
+  "skills": ["skill1", "skill2"],
+  "years_experience": 0,
+  "summary": "one sentence plain English description of this person"
+}
+
+Rules:
+- skills: specific, searchable skills (e.g. "tailoring", "data entry", "plumbing", "graphic design")
+- years_experience: total years of work experience as a number
+- summary: max 15 words
+
+CV/Description:
+${cvText.slice(0, 1500)}`,
+      }],
+    });
+    const text2 = msg.content.find((b) => b.type === 'text')?.text || '{}';
+    return JSON.parse(text2.match(/\{[\s\S]*\}/)?.[0] || '{}');
+  } catch {
+    return { skills: [], years_experience: 0, summary: '' };
+  }
+}
+
 async function translateResponse(text, language) {
   if (!text || language === 'en-NG') return text;
   const langName = LANG_NAMES[language] || language;
@@ -182,4 +212,4 @@ async function translateResponse(text, language) {
   }
 }
 
-module.exports = { explainForecast, generatePLRecommendation, handleWhatsAppChat, handleWorkerChat, translateResponse };
+module.exports = { explainForecast, generatePLRecommendation, handleWhatsAppChat, handleWorkerChat, translateResponse, parseCVText };

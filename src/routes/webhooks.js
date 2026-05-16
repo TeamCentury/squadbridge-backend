@@ -7,10 +7,12 @@ const { Op } = require('sequelize');
 const squadService = require('../services/squadService');
 const whatsappService = require('../services/whatsappService');
 const { transcribeAudio, generateTTS } = require('../services/spitchService');
-const { handleWhatsAppChat, explainForecast, handleWorkerChat, translateResponse } = require('../services/claudeService');
+const { handleWhatsAppChat, explainForecast, handleWorkerChat, translateResponse, parseCVText } = require('../services/claudeService');
 const { matchForUser } = require('../services/opportunityService');
 const { scoreUser } = require('../services/creditScoringService');
 const logger = require('../config/logger');
+const pdfParse = require('pdf-parse');
+const mammoth = require('mammoth');
 
 // Credit protection constants
 const VOICE_DAILY_PER_USER = 3;   // max 3 voice msgs per user per day
@@ -231,6 +233,39 @@ const WORKER_FOLLOWUP = [
   { id: 'btn_menu',  title: 'Main Menu' },
 ];
 
+// ── CV document text extraction ─────────────────────────────────────────────
+
+async function extractTextFromDocument(buffer, mimeType) {
+  try {
+    if (mimeType === 'application/pdf') {
+      const data = await pdfParse(buffer);
+      return data.text?.trim() || '';
+    }
+    if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || mimeType === 'application/msword') {
+      const result = await mammoth.extractRawText({ buffer });
+      return result.value?.trim() || '';
+    }
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+// Upskilling platforms relevant to Nigerian informal workers
+const UPSKILL_SITES = {
+  tech:    'ALX Africa (alxafrica.com) · AltSchool (altschoolafrica.com) · HNG Internship (hng.tech)',
+  digital: 'Google Digital Skills (learndigital.withgoogle.com/digitalskills) · Meta Blueprint (facebook.com/business/learn)',
+  general: 'Jobberman Soft Skills (jobberman.com/soft-skills) · Coursera (coursera.org)',
+};
+
+const BENEFITS_PITCH = `*What you unlock as a SquadBridge member:*
+🏦 *Pension* — Regular contributions, just like civil servants
+🏥 *Health Insurance* — Coverage for you and your family
+💰 *Working Capital Loans* — Funding to grow your business or take on bigger gigs
+📊 *Credit Score* — A verified financial record banks actually accept
+
+These are benefits that formal-sector workers get by default. SquadBridge makes them available to you as an informal worker.`;
+
 // ── Session helpers (Redis, 30-day TTL) ─────────────────────────────────────
 
 async function getWASession(phone) {
@@ -295,20 +330,89 @@ async function sendMainMenu(phone, user, userType) {
   }
 }
 
+// ── CV processing ─────────────────────────────────────────────────────────────
+
+async function processCVAndRespond(phone, cvText, user, userType, session) {
+  await whatsappService.sendText(phone, '📄 Got it! Analysing your CV now...');
+
+  const parsed = await parseCVText(cvText);
+  const skills = parsed.skills || [];
+
+  // Persist skills to the user's profile in the database
+  if (skills.length) {
+    const Model = userType === 'graduate' ? Graduate : Trader;
+    await Model.update({ skills: JSON.stringify(skills) }, { where: { id: user.id } });
+    user.skills = JSON.stringify(skills); // keep local ref in sync
+  }
+
+  await setWASession(phone, { awaiting_cv: false });
+
+  const firstName = user.name.split(' ')[0];
+
+  if (!skills.length) {
+    await whatsappService.sendText(
+      phone,
+      `Thanks ${firstName}! I couldn't extract specific skills from that — could you type a short list of what you can do? (e.g. "tailoring, customer service, Excel")`
+    );
+    await setWASession(phone, { awaiting_cv: true });
+    return;
+  }
+
+  // Try matching now that skills are saved
+  const opps = await matchForUser(user.id, userType, user.skills, 5);
+  const summary = parsed.summary ? `_${parsed.summary}_\n\n` : '';
+
+  if (opps.length) {
+    const list = opps.slice(0, 3).map((o, i) =>
+      `*${i + 1}. ${o.title}*\n${o.organization || 'SquadBridge Platform'}${o.pay_or_stipend ? ` · ${o.pay_or_stipend}` : ''}${o.deadline ? `\nDeadline: ${new Date(o.deadline).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })}` : ''}`
+    ).join('\n\n');
+    await whatsappService.sendText(
+      phone,
+      `Great profile, ${firstName}! 🎯\n\n${summary}*Your skills:* ${skills.join(', ')}\n\nHere are your top matches:\n\n${list}\n\nReply with the number to get more details.`
+    );
+  } else {
+    const upskillLine = skills.some((s) => /tech|code|design|data|dev/i.test(s))
+      ? UPSKILL_SITES.tech
+      : skills.some((s) => /market|social|digital|content/i.test(s))
+        ? UPSKILL_SITES.digital
+        : UPSKILL_SITES.general;
+    await whatsappService.sendText(
+      phone,
+      `Profile saved, ${firstName}! ✅\n\n${summary}*Your skills:* ${skills.join(', ')}\n\nNo matching gigs today — check back tomorrow as new ones come in. While you wait, upskill for free:\n${upskillLine}\n\n${BENEFITS_PITCH}`
+    );
+  }
+
+  await whatsappService.sendButtons(phone, 'What would you like to do next?', WORKER_FOLLOWUP);
+}
+
 // ── Intent executor ──────────────────────────────────────────────────────────
 
 async function executeIntent(intent, user, userType, rawText, language) {
   try {
     if (intent === 'job_search') {
       const opps = await matchForUser(user.id, userType, user.skills || '[]', 5);
+      const firstName = user.name.split(' ')[0];
+      const skills = (() => { try { return JSON.parse(user.skills || '[]'); } catch { return []; } })();
+
       if (!opps.length) {
-        const skills = (() => { try { return JSON.parse(user.skills || '[]').join(', '); } catch { return ''; } })();
-        return `No matching opportunities right now. 🔍 New gigs are posted daily — check back tomorrow!\n\nYour skills on record: ${skills || 'none set. Update your profile to improve matches.'}`;
+        // No profile yet — ask for CV upload
+        if (!skills.length) {
+          return `Let's get you ready for your first opportunity, ${firstName}! 🚀\n\nTo match you with the right gigs and jobs, please *send us your CV* — you can upload a PDF or Word document, or just type your work experience and skills below.\n\nWe'll tailor your matches based on your profile.\n\n${BENEFITS_PITCH}`;
+        }
+        // Has skills but no current matches — suggest upskilling
+        const upskillLine = skills.some((s) => /tech|code|design|data|dev/i.test(s))
+          ? UPSKILL_SITES.tech
+          : skills.some((s) => /market|social|digital|content/i.test(s))
+            ? UPSKILL_SITES.digital
+            : UPSKILL_SITES.general;
+        return `No matches right now for your skills (${skills.join(', ')}), ${firstName}. New gigs are posted daily — check back tomorrow! 🔍\n\nWhile you wait, upskill for free:\n${upskillLine}\n\n${BENEFITS_PITCH}`;
       }
+
       const list = opps.slice(0, 3).map((o, i) =>
-        `*${i + 1}. ${o.title}*\n${o.organization || 'SquadBridge Platform'}${o.deadline ? `\nDeadline: ${o.deadline}` : ''}`
+        `*${i + 1}. ${o.title}*\n${o.organization || 'SquadBridge Platform'}${o.pay_or_stipend ? ` · ${o.pay_or_stipend}` : ''}${o.deadline ? `\nDeadline: ${new Date(o.deadline).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })}` : ''}`
       ).join('\n\n');
-      return `Here are your top matches 🎯\n\n${list}\n\nTap *Find Jobs* again to refresh, or ask me about any of these.`;
+      const skillLine = skills.length ? `*Your skills:* ${skills.join(', ')}` : '';
+      return `Here are your top matches, ${firstName} 🎯\n\n${list}\n\n${skillLine ? `${skillLine}\n\n` : ''}Reply with the number to get more details, or tap *Find Jobs* again to refresh.`;
     }
 
     if (intent === 'credit_score') {
@@ -464,6 +568,10 @@ router.post('/whatsapp', validateMetaSig, async (req, res) => {
         userText = pendingText;
         isVoiceMessage = format === 'voice';
         language = pendingLang;
+      } else if (session.awaiting_cv && userType !== 'school' && userText.length > 20) {
+        // User typed their experience instead of uploading a document
+        await processCVAndRespond(senderPhone, userText, user, userType, session);
+        return;
       } else {
         // Detect language from text; persist to session so future messages inherit it
         const detected = detectLanguage(userText);
@@ -472,6 +580,35 @@ router.post('/whatsapp', validateMetaSig, async (req, res) => {
           await setWASession(senderPhone, { language: detected });
         }
       }
+    }
+
+    // ── CV document / image upload ───────────────────────────────────────────
+    else if (message.type === 'document' || message.type === 'image') {
+      if (session.awaiting_cv && userType !== 'school') {
+        const mediaId = message.type === 'document' ? message.document?.id : message.image?.id;
+        const caption = message.type === 'image' ? message.image?.caption?.trim() : null;
+        let cvText = caption || '';
+
+        if (mediaId) {
+          try {
+            const { buffer, mimeType } = await whatsappService.downloadMedia(mediaId);
+            const extracted = await extractTextFromDocument(buffer, mimeType);
+            if (extracted) cvText = extracted;
+          } catch (err) {
+            logger.warn({ fn: 'wa.cv_download', error: err.message });
+          }
+        }
+
+        if (!cvText) {
+          await whatsappService.sendText(senderPhone, "I couldn't read that file. Please try a PDF or Word document, or just type your experience below.");
+          return;
+        }
+
+        await processCVAndRespond(senderPhone, cvText, user, userType, session);
+        return;
+      }
+      // Not awaiting CV — ignore document/image silently
+      return;
     }
 
     // ── Interactive (button tap) ─────────────────────────────────────────────
@@ -505,6 +642,11 @@ router.post('/whatsapp', validateMetaSig, async (req, res) => {
     // ── Detect intent and execute ────────────────────────────────────────────
     const intent = detectIntent(userText);
     let replyText = await executeIntent(intent, user, userType, userText, language);
+
+    // If job_search sent a CV-request prompt, enter awaiting_cv state
+    if (intent === 'job_search' && userType !== 'school' && replyText.includes('send us your CV')) {
+      await setWASession(senderPhone, { awaiting_cv: true });
+    }
 
     // For structured intents, Claude doesn't handle the language — translate the result.
     // The 'general' intent already calls Claude with full language context, so skip it.
