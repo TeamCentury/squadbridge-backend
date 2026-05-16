@@ -152,8 +152,13 @@ function notifyForecastAlert(phone, projectedBalance, payroll, date) {
   return sendText(phone, `SquadBridge Alert: At current pace, balance on ${date} will be ₦${projectedBalance.toLocaleString()} — below payroll of ₦${payroll.toLocaleString()}. Review: ${process.env.FRONTEND_URL}/forecast`);
 }
 
-function notifyOnboarding(phone, nuban) {
-  return sendText(phone, `Welcome to SquadBridge! Your account number: ${nuban}. Log in: ${process.env.FRONTEND_URL}`);
+function notifyOnboarding(phone, nuban, name) {
+  const firstName = (name || 'there').split(' ')[0];
+  const loginUrl = process.env.FRONTEND_URL || 'https://squadbridge.ng';
+  return sendText(
+    phone,
+    `Welcome to SquadBridge, ${firstName}! 🎉\n\nYour school's virtual account number: *${nuban || 'being set up'}* (GTBank)\n\nLog in to your financial dashboard:\n${loginUrl}/login\n\nFrom this chat you can:\n• Type *cash flow* — see your 30/60/90-day forecast\n• Type *fees* — check collection status\n• Type *p&l* — view your P&L report\n• Ask me anything about your school's finances\n\nI'm here anytime — just send a message! 👋`
+  );
 }
 
 function notifyTraderOnboarding(phone, nuban, name) {

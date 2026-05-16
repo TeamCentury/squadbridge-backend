@@ -154,7 +154,7 @@ router.post('/onboard', [
     });
 
     await AuditLog.create({ school_id: school.id, event_type: 'ONBOARDED', description: `${name} onboarded successfully` });
-    await whatsappService.notifyOnboarding(phone, nuban);
+    await whatsappService.notifyOnboarding(phone, nuban, name);
 
     const token = jwt.sign(
       { user_id: school.id, user_type: 'school', school_id: school.id, phone: school.phone },
