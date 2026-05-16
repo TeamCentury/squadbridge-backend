@@ -11,8 +11,6 @@ const { handleWhatsAppChat, explainForecast, handleWorkerChat, translateResponse
 const { matchForUser } = require('../services/opportunityService');
 const { scoreUser } = require('../services/creditScoringService');
 const logger = require('../config/logger');
-const pdfParse = require('pdf-parse');
-const mammoth = require('mammoth');
 
 // Credit protection constants
 const VOICE_DAILY_PER_USER = 3;   // max 3 voice msgs per user per day
@@ -238,10 +236,12 @@ const WORKER_FOLLOWUP = [
 async function extractTextFromDocument(buffer, mimeType) {
   try {
     if (mimeType === 'application/pdf') {
+      const pdfParse = require('pdf-parse');
       const data = await pdfParse(buffer);
       return data.text?.trim() || '';
     }
     if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || mimeType === 'application/msword') {
+      const mammoth = require('mammoth');
       const result = await mammoth.extractRawText({ buffer });
       return result.value?.trim() || '';
     }
