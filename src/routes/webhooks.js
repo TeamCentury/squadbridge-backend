@@ -10,6 +10,7 @@ const { transcribeAudio, generateTTS } = require('../services/spitchService');
 const { handleWhatsAppChat, explainForecast, handleWorkerChat, translateResponse, parseCVText } = require('../services/claudeService');
 const { matchForUser } = require('../services/opportunityService');
 const { scoreUser } = require('../services/creditScoringService');
+const { createEscrow } = require('../services/escrowService');
 const logger = require('../config/logger');
 
 // Credit protection constants
@@ -225,6 +226,21 @@ const SCHOOL_FOLLOWUP = [
   { id: 'btn_menu', title: 'Main Menu' },
   { id: 'btn_ask',  title: 'Ask a Question' },
 ];
+const TRADER_MENU_BUTTONS = [
+  { id: 'btn_jobs',    title: 'Find Jobs' },
+  { id: 'btn_getpaid', title: 'Get Paid' },
+  { id: 'btn_score',   title: 'My Score' },
+];
+const TRADER_FOLLOWUP = [
+  { id: 'btn_getpaid', title: 'Get Paid' },
+  { id: 'btn_jobs',    title: 'Find Jobs' },
+  { id: 'btn_menu',    title: 'Main Menu' },
+];
+const GRADUATE_MENU_BUTTONS = [
+  { id: 'btn_jobs',  title: 'Find Jobs' },
+  { id: 'btn_score', title: 'My Score' },
+  { id: 'btn_menu',  title: 'Main Menu' },
+];
 const WORKER_FOLLOWUP = [
   { id: 'btn_jobs',  title: 'Find Jobs' },
   { id: 'btn_score', title: 'My Score' },
@@ -302,6 +318,7 @@ async function findUserByPhone(phone) {
 
 function detectIntent(text) {
   const t = text.toLowerCase();
+  if (/\b(get paid|payment link|escrow|collect payment|charge client|invoice|send link|pay me)\b/.test(t)) return 'get_paid';
   if (/\b(job|work|gig|opport|find me|looking for|hire me|vacancy|intern|employ)\b/.test(t)) return 'job_search';
   if (/\b(score|credit|loan|eligible|borrow|lending)\b/.test(t)) return 'credit_score';
   if (/\b(balance|wallet|naira|account balance|how much)\b/.test(t)) return 'balance';
@@ -321,11 +338,18 @@ async function sendMainMenu(phone, user, userType) {
       `Hi ${name}! 👋 Welcome to *SquadBridge*.\n\nI can give you live financial data about your school. What would you like to check?`,
       SCHOOL_MENU_BUTTONS
     );
+  } else if (userType === 'trader') {
+    const trade = user.business_type || 'artisan';
+    await whatsappService.sendButtons(
+      phone,
+      `Hi ${name}! 👋 Welcome to *SquadBridge*.\n\nYou're registered as a *${trade}*. I can help you:\n• Find jobs that match your skills\n• Generate a secure payment link to collect from clients\n• Track your credit score and unlock loans\n\nWhat would you like to do?`,
+      TRADER_MENU_BUTTONS
+    );
   } else {
     await whatsappService.sendButtons(
       phone,
-      `Hi ${name}! 👋 I'm your *SquadBridge* assistant.\n\nI can help you find jobs, check your credit score, or answer any questions. What would you like to do?`,
-      WORKER_FOLLOWUP
+      `Hi ${name}! 👋 I'm your *SquadBridge* assistant.\n\nI can help you find jobs and opportunities that match your profile, or check your credit score.\n\nWhat would you like to do?`,
+      GRADUATE_MENU_BUTTONS
     );
   }
 }
@@ -389,6 +413,11 @@ async function processCVAndRespond(phone, cvText, user, userType, session) {
 
 async function executeIntent(intent, user, userType, rawText, language) {
   try {
+    if (intent === 'get_paid' && userType === 'trader') {
+      const firstName = user.name.split(' ')[0];
+      return `Let's create a secure payment link for you, ${firstName}! 💳\n\n*What's the job or service?*\n(e.g. Plumbing repair, Tailoring, Painting, Electrical work)\n\nJust type it below.`;
+    }
+
     if (intent === 'job_search') {
       const opps = await matchForUser(user.id, userType, user.skills || '[]', 5);
       const firstName = user.name.split(' ')[0];
@@ -568,6 +597,46 @@ router.post('/whatsapp', validateMetaSig, async (req, res) => {
         userText = pendingText;
         isVoiceMessage = format === 'voice';
         language = pendingLang;
+      } else if (session.awaiting_job_title && userType === 'trader') {
+        // Step 2 of escrow flow: user typed the job title
+        const jobTitle = userText.trim();
+        await setWASession(senderPhone, { awaiting_job_title: false, pending_job_title: jobTitle, awaiting_job_amount: true });
+        await whatsappService.sendText(senderPhone, `Got it — *${jobTitle}*. 👍\n\nHow much has your client agreed to pay? (type the amount in Naira, e.g. *50000*)`);
+        return;
+      } else if (session.awaiting_job_amount && userType === 'trader') {
+        // Step 3: user typed the amount → create escrow
+        const raw = userText.replace(/[₦,\s]/g, '');
+        const amount = parseFloat(raw);
+        if (isNaN(amount) || amount < 500) {
+          await whatsappService.sendText(senderPhone, 'Please enter a valid amount in Naira (minimum ₦500). Example: *15000*');
+          return;
+        }
+        const jobTitle = session.pending_job_title || 'Job';
+        await setWASession(senderPhone, { awaiting_job_amount: false, pending_job_title: null });
+        await whatsappService.sendText(senderPhone, '⏳ Creating your secure payment link...');
+        try {
+          const escrow = await createEscrow({
+            employerId: user.id, // self-initiated — trader collects from client
+            workerId: user.id,
+            workerType: 'trader',
+            agreedAmount: amount,
+            jobTitle,
+            jobDescription: `${jobTitle} — collected via SquadBridge WhatsApp`,
+            durationDays: 7,
+            workerPhone: senderPhone,
+          });
+          const nuban = escrow.squad_dynamic_nuban || user.nuban || process.env.PLATFORM_NUBAN;
+          const ref = `ESCROW-${escrow.id.slice(0, 8).toUpperCase()}`;
+          await whatsappService.sendText(
+            senderPhone,
+            `✅ *Payment link created!*\n\nShare these details with your client:\n\n*Job:* ${jobTitle}\n*Amount:* ₦${Number(amount).toLocaleString()}\n\n*Pay into:*\nAccount: *${nuban}*\nBank: GTBank\nRef: *${ref}*\n\nFunds are held in escrow until you confirm the job is done — then SquadBridge releases to your account.\n\n_Escrow ID: ${ref}_`
+          );
+        } catch (err) {
+          logger.error({ fn: 'wa.escrow', error: err.message });
+          await whatsappService.sendText(senderPhone, "Sorry, I couldn't create the payment link right now. Please try again in a moment.");
+        }
+        await whatsappService.sendButtons(senderPhone, 'What would you like to do next?', TRADER_FOLLOWUP);
+        return;
       } else if (session.awaiting_cv && userType !== 'school' && userText.length > 20) {
         // User typed their experience instead of uploading a document
         await processCVAndRespond(senderPhone, userText, user, userType, session);
@@ -623,6 +692,7 @@ router.post('/whatsapp', validateMetaSig, async (req, res) => {
       }
       const intentMap = {
         btn_jobs:     'find me jobs',
+        btn_getpaid:  'get paid payment link',
         btn_score:    'what is my credit score',
         btn_forecast: 'cash flow forecast',
         btn_fees:     'fee collections summary',
@@ -646,6 +716,10 @@ router.post('/whatsapp', validateMetaSig, async (req, res) => {
     // If job_search sent a CV-request prompt, enter awaiting_cv state
     if (intent === 'job_search' && userType !== 'school' && replyText.includes('send us your CV')) {
       await setWASession(senderPhone, { awaiting_cv: true });
+    }
+    // If get_paid prompt sent, enter awaiting_job_title state
+    if (intent === 'get_paid' && userType === 'trader') {
+      await setWASession(senderPhone, { awaiting_job_title: true });
     }
 
     // For structured intents, Claude doesn't handle the language — translate the result.
@@ -672,7 +746,7 @@ router.post('/whatsapp', validateMetaSig, async (req, res) => {
 
     // Follow-up buttons (skip after audio reply — buttons don't render on audio messages)
     if (!(isVoiceMessage && replyFormat === 'voice')) {
-      const followup = userType === 'school' ? SCHOOL_FOLLOWUP : WORKER_FOLLOWUP;
+      const followup = userType === 'school' ? SCHOOL_FOLLOWUP : userType === 'trader' ? TRADER_FOLLOWUP : WORKER_FOLLOWUP;
       await whatsappService.sendButtons(senderPhone, 'What would you like to do next?', followup);
     }
 
