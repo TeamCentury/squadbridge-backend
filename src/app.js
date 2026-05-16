@@ -30,6 +30,7 @@ const badgeRoutes = require('./routes/badges');
 const vapiRoutes = require('./routes/vapi');
 const twilioRoutes = require('./routes/twilio');
 const opportunityRoutes = require('./routes/opportunities');
+const agentRoutes = require('./routes/agent');
 
 const path = require('path');
 
@@ -132,6 +133,9 @@ app.use('/api/v1/employers', employerRoutes);
 app.use('/api/v1/gigs', gigRoutes);
 app.use('/api/v1/badges', badgeRoutes);
 app.use('/api/v1/opportunities', opportunityRoutes);
+
+// Agent web chat
+app.use('/api/v1/agent', agentRoutes);
 
 // Voice channels
 app.use('/api/v1/vapi', vapiRoutes);

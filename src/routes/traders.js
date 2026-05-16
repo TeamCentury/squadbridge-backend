@@ -85,13 +85,13 @@ router.post('/register', [
   body('name').notEmpty(),
   body('phone').notEmpty(),
   body('password').isLength({ min: 6 }),
-  body('business_type').notEmpty(),
 ], async (req, res, next) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { name, phone, password, business_name, business_type, skills, state, lga, address, bvn, email } = req.body;
+    const { name, phone, password, business_name, primary_trade, business_type, skills, state, lga, address, bvn, email } = req.body;
+    const resolvedBusinessType = primary_trade || business_type || 'trader';
 
     const existing = await Trader.findOne({ where: { phone } });
     if (existing) return res.status(400).json({ error: 'Phone number already registered' });
@@ -126,10 +126,10 @@ router.post('/register', [
     }
 
     // Normalize business_type to valid enum; store free-text description in business_name
-    const safe_type = TRADER_TYPES.includes((business_type || '').toLowerCase())
-      ? business_type.toLowerCase()
+    const safe_type = TRADER_TYPES.includes((resolvedBusinessType || '').toLowerCase())
+      ? resolvedBusinessType.toLowerCase()
       : 'trader';
-    const safe_bname = business_name || business_type || name;
+    const safe_bname = business_name || resolvedBusinessType || name;
 
     const skillsVal = Array.isArray(skills) ? JSON.stringify(skills)
       : (typeof skills === 'string' && skills ? skills : null);
@@ -188,16 +188,16 @@ router.post('/register', [
  */
 router.post('/login', async (req, res, next) => {
   try {
-    const { phone, password } = req.body;
-    if (!phone || !password) return res.status(400).json({ error: 'phone and password required' });
+    const { email, phone, password } = req.body;
+    if ((!email && !phone) || !password) return res.status(400).json({ error: 'email/phone and password required' });
 
-    const trader = await Trader.findOne({ where: { phone } });
+    const trader = await Trader.findOne({ where: email ? { email } : { phone } });
     if (!trader) return res.status(401).json({ error: 'Invalid credentials' });
 
     const valid = await bcrypt.compare(password, trader.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
-    res.json({ token: issueToken(trader), trader_id: trader.id, name: trader.name, nuban: trader.nuban });
+    res.json({ token: issueToken(trader), trader_id: trader.id, name: trader.name, email: trader.email, phone: trader.phone, nuban: trader.nuban, primary_trade: trader.business_name });
   } catch (err) {
     next(err);
   }

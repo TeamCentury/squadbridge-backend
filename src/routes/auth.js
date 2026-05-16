@@ -71,12 +71,12 @@ router.post('/login', [
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
     const token = jwt.sign(
-      { school_id: school.id, phone: school.phone },
+      { user_id: school.id, user_type: 'school', school_id: school.id, phone: school.phone },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
-    res.json({ token, school_id: school.id, name: school.name });
+    res.json({ token, school_id: school.id, name: school.name, nuban: school.nuban, phone: school.phone });
   } catch (err) {
     next(err);
   }

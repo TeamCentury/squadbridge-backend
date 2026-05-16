@@ -180,16 +180,17 @@ router.post('/register', [
  */
 router.post('/login', async (req, res, next) => {
   try {
-    const { phone, password } = req.body;
-    if (!phone || !password) return res.status(400).json({ error: 'phone and password required' });
+    const { email, phone, password } = req.body;
+    const identifier = email || phone;
+    if (!identifier || !password) return res.status(400).json({ error: 'email/phone and password required' });
 
-    const graduate = await Graduate.findOne({ where: { phone } });
+    const graduate = await Graduate.findOne({ where: email ? { email } : { phone } });
     if (!graduate) return res.status(401).json({ error: 'Invalid credentials' });
 
     const valid = await bcrypt.compare(password, graduate.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
-    res.json({ token: issueToken(graduate), graduate_id: graduate.id, name: graduate.name, nuban: graduate.nuban });
+    res.json({ token: issueToken(graduate), graduate_id: graduate.id, name: graduate.name, email: graduate.email, phone: graduate.phone, nuban: graduate.nuban });
   } catch (err) {
     next(err);
   }

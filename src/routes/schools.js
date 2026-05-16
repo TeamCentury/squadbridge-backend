@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { body, param, validationResult } = require('express-validator');
 const { School, Student, Transaction, Forecast } = require('../models');
 const squadService = require('../services/squadService');
@@ -155,7 +156,13 @@ router.post('/onboard', [
     await AuditLog.create({ school_id: school.id, event_type: 'ONBOARDED', description: `${name} onboarded successfully` });
     await whatsappService.notifyOnboarding(phone, nuban);
 
-    res.status(201).json({ school_id: school.id, nuban, status: 'onboarded' });
+    const token = jwt.sign(
+      { user_id: school.id, user_type: 'school', school_id: school.id, phone: school.phone },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.status(201).json({ token, school_id: school.id, nuban, status: 'onboarded' });
   } catch (err) {
     next(err);
   }
