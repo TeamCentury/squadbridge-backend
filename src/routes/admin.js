@@ -2,7 +2,7 @@ const router = require('express').Router();
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { Op } = require('sequelize');
-const { School, Transaction, PayrollLog, AuditLog, sequelize } = require('../models');
+const { School, Transaction, PayrollLog, AuditLog, OpportunityPool, Employer, GigPost, Trader, Graduate, sequelize } = require('../models');
 const adminAuth = require('../middleware/adminAuth');
 const redis = require('../config/redis');
 const logger = require('../config/logger');
@@ -538,6 +538,52 @@ router.get('/audit', async (req, res, next) => {
     });
 
     res.json({ total: count, events: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/admin/seed — idempotent seed for OpportunityPool (and supporting tables)
+router.post('/seed', async (req, res, next) => {
+  try {
+    const expires = (days) => new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+
+    const EMPLOYERS = [
+      { id: 'e1000000-0000-0000-0000-000000000001', name: 'Adewale Okonkwo', company: 'BuildRight Nigeria Ltd', phone: '08031000001', email: 'adewale@buildright.ng', state: 'Lagos', lga: 'Ikeja', industry: 'Construction', company_size: '11-50', bvn_verified: true },
+      { id: 'e1000000-0000-0000-0000-000000000002', name: 'Ngozi Eze', company: 'TechForward Solutions', phone: '08031000002', email: 'ngozi@techforward.ng', state: 'Abuja', lga: 'Wuse', industry: 'Technology', company_size: '1-10', bvn_verified: true },
+      { id: 'e1000000-0000-0000-0000-000000000003', name: 'Emeka Chukwu', company: 'Harvest Foods Nig', phone: '08031000003', email: 'emeka@harvestfoods.ng', state: 'Enugu', lga: 'Enugu North', industry: 'Food & Agriculture', company_size: '51-200', bvn_verified: false },
+    ];
+
+    const OPPORTUNITIES = [
+      { id: 'op000000-0000-0000-0000-000000000001', source_url_hash: 'seed001seedseed001seedseed001seedseed001seedseed001seedseed001se', title: 'Youth Empowerment Vocational Training — LASG (Plumbing, Electrical, Welding)', organization: 'Lagos State Government — TESCOM', description: 'Free 3-month vocational training for Lagos residents aged 18–35. Trades available: plumbing, electrical installation, welding, tiling, and AC servicing. Certificate issued on completion. Limited slots.', skills_required: JSON.stringify(['plumbing', 'electrician', 'welding', 'tiling']), opportunity_type: 'training', target_user_type: 'trader', location: 'Lagos, Nigeria', pay_or_stipend: 'Free training + ₦15,000/month stipend', deadline: expires(45), external_link: 'https://tescom.lagosstate.gov.ng', source_platform: 'government', is_active: true },
+      { id: 'op000000-0000-0000-0000-000000000002', source_url_hash: 'seed002seedseed002seedseed002seedseed002seedseed002seedseed002se', title: 'Jobberman Nigeria — Graduate Trainee Programme (Multiple Sectors)', organization: 'Jobberman Nigeria', description: 'Applications open for graduate trainees in banking, FMCG, technology, and consulting. Minimum 2:1 degree required. 12-month rotational programme with competitive pay.', skills_required: JSON.stringify(['microsoft excel', 'communication', 'data analysis', 'administration']), opportunity_type: 'full_time', target_user_type: 'graduate', location: 'Lagos / Abuja / Port Harcourt', pay_or_stipend: '₦120,000–₦180,000/month', deadline: expires(30), external_link: 'https://jobberman.com', source_platform: 'jobberman', is_active: true },
+      { id: 'op000000-0000-0000-0000-000000000003', source_url_hash: 'seed003seedseed003seedseed003seedseed003seedseed003seedseed003se', title: 'CBN Creative Industry Financing Initiative — Artisan Loans', organization: 'Central Bank of Nigeria', description: 'Single-digit interest loans for artisans and micro-businesses in the creative sector. Trades include tailoring, hairdressing, welding, and food processing. Apply through participating microfinance banks.', skills_required: JSON.stringify(['tailoring', 'welding', 'food processing', 'hairdressing']), opportunity_type: 'grant', target_user_type: 'trader', location: 'Nationwide', pay_or_stipend: 'Loans up to ₦500,000 at 9% p.a.', deadline: expires(60), external_link: 'https://cbn.gov.ng', source_platform: 'government', is_active: true },
+      { id: 'op000000-0000-0000-0000-000000000004', source_url_hash: 'seed004seedseed004seedseed004seedseed004seedseed004seedseed004se', title: 'Google Africa Developer Scholarship — Web & Android Track', organization: 'Google via Andela', description: 'Fully funded online scholarship for Africans interested in web development and Android programming. 6-month course with mentorship, community support, and job placement assistance.', skills_required: JSON.stringify(['javascript', 'react', 'android', 'python', 'frontend']), opportunity_type: 'training', target_user_type: 'graduate', location: 'Remote (Nigeria eligible)', pay_or_stipend: 'Free scholarship', deadline: expires(20), external_link: 'https://andela.com', source_platform: 'discovery_africa', is_active: true },
+      { id: 'op000000-0000-0000-0000-000000000005', source_url_hash: 'seed005seedseed005seedseed005seedseed005seedseed005seedseed005se', title: 'BOI YouWin! Connect Nigeria — SME Grant (Up to ₦10M)', organization: 'Bank of Industry', description: 'Business grant competition for young Nigerians aged 18–40 with viable business ideas or existing small businesses. Categories include agro-processing, manufacturing, and digital services.', skills_required: JSON.stringify(['farming', 'agriculture', 'food processing', 'manufacturing']), opportunity_type: 'grant', target_user_type: 'all', location: 'Nationwide', pay_or_stipend: 'Grants from ₦1M to ₦10M', deadline: expires(75), external_link: 'https://boi.ng', source_platform: 'government', is_active: true },
+      { id: 'op000000-0000-0000-0000-000000000006', source_url_hash: 'seed006seedseed006seedseed006seedseed006seedseed006seedseed006se', title: 'MyJobMag — Remote Customer Support Agents (Igbo/Yoruba/Hausa Speakers)', organization: 'Multiple Clients via MyJobMag', description: 'Openings for bilingual customer support representatives who speak Igbo, Yoruba, or Hausa alongside English. Work from home, part-time or full-time. Laptop required.', skills_required: JSON.stringify(['customer support', 'communication', 'data entry', 'microsoft excel']), opportunity_type: 'gig', target_user_type: 'all', location: 'Remote (Nigeria)', pay_or_stipend: '₦40,000–₦75,000/month', deadline: expires(14), external_link: 'https://myjobmag.com', source_platform: 'myjobmag', is_active: true },
+    ];
+
+    async function upsert(Model, records) {
+      let created = 0, skipped = 0;
+      for (const r of records) {
+        const [, wasCreated] = await Model.findOrCreate({ where: { id: r.id }, defaults: r });
+        wasCreated ? created++ : skipped++;
+      }
+      return { created, skipped };
+    }
+
+    const [empResult, oppResult] = await Promise.all([
+      upsert(Employer, EMPLOYERS),
+      upsert(OpportunityPool, OPPORTUNITIES),
+    ]);
+
+    logger.info({ event: 'admin_seed', admin: req.user.email, opportunities: oppResult });
+
+    res.json({
+      message: 'Seed complete',
+      employers: empResult,
+      opportunities: oppResult,
+    });
   } catch (err) {
     next(err);
   }
