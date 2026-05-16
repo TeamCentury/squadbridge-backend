@@ -26,6 +26,9 @@ jobs:
       - name: Run tests
         run: npm test -- --passWithNoTests
 
+      - name: Prune dev dependencies before packaging
+        run: npm prune --omit=dev
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
