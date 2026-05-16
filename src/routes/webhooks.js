@@ -7,7 +7,7 @@ const { Op } = require('sequelize');
 const squadService = require('../services/squadService');
 const whatsappService = require('../services/whatsappService');
 const { transcribeAudio, generateTTS } = require('../services/spitchService');
-const { handleWhatsAppChat, explainForecast, handleWorkerChat } = require('../services/claudeService');
+const { handleWhatsAppChat, explainForecast, handleWorkerChat, translateResponse } = require('../services/claudeService');
 const { matchForUser } = require('../services/opportunityService');
 const { scoreUser } = require('../services/creditScoringService');
 const logger = require('../config/logger');
@@ -200,6 +200,21 @@ router.get('/whatsapp', (req, res) => {
 // ── WhatsApp constants ───────────────────────────────────────────────────────
 
 const GREETINGS = ['hi', 'hello', 'hey', 'menu', 'start', 'help', 'helo', 'hai'];
+
+// Lightweight keyword-based language detection (no API cost).
+// Returns a LANG_NAMES key or null if confident detection isn't possible.
+function detectLanguage(text) {
+  const t = text.toLowerCase();
+  // Nigerian Pidgin — check first (most distinctive loanword patterns)
+  if (/\b(wetin|how far|i dey|no be|naso|comot|waka|abeg|pikin|chop|e don|una\b|abi\b|sabi\b)\b/.test(t)) return 'pcm-NG';
+  // Yoruba — diacritic chars are strong signal; also check common words
+  if (/[ẹọṣạ]|\b(jọwọ|báwo|àwọn|ẹ jẹ|kí ni|ẹ kaaro|ẹ kaasan|ni owo|fún mi)\b/i.test(text)) return 'yo-NG';
+  // Hausa
+  if (/\b(yaya|menene|ina aiki|don allah|mun gode|na gode|lafiya|kana|kina|yana|tana|sannu|ina kwana)\b/i.test(t)) return 'ha-NG';
+  // Igbo
+  if (/\b(kedu|biko|chukwu|nna m|ọ dị|i nwere|anyị|ya bụ|ndewo|ụtụtụ)\b/i.test(t)) return 'ig-NG';
+  return null;
+}
 
 const SCHOOL_MENU_BUTTONS = [
   { id: 'btn_forecast', title: 'Cash Flow' },
@@ -449,6 +464,13 @@ router.post('/whatsapp', validateMetaSig, async (req, res) => {
         userText = pendingText;
         isVoiceMessage = format === 'voice';
         language = pendingLang;
+      } else {
+        // Detect language from text; persist to session so future messages inherit it
+        const detected = detectLanguage(userText);
+        if (detected && detected !== language) {
+          language = detected;
+          await setWASession(senderPhone, { language: detected });
+        }
       }
     }
 
@@ -482,7 +504,13 @@ router.post('/whatsapp', validateMetaSig, async (req, res) => {
 
     // ── Detect intent and execute ────────────────────────────────────────────
     const intent = detectIntent(userText);
-    const replyText = await executeIntent(intent, user, userType, userText, language);
+    let replyText = await executeIntent(intent, user, userType, userText, language);
+
+    // For structured intents, Claude doesn't handle the language — translate the result.
+    // The 'general' intent already calls Claude with full language context, so skip it.
+    if (language !== 'en-NG' && intent !== 'general') {
+      replyText = await translateResponse(replyText, language);
+    }
 
     // ── Send reply (voice or text based on stored preference) ────────────────
     const replyFormat = session.reply_format || 'text';

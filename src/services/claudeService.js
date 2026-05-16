@@ -164,4 +164,22 @@ async function handleWorkerChat(userMessage, workerContext, language = 'en-NG') 
   }
 }
 
-module.exports = { explainForecast, generatePLRecommendation, handleWhatsAppChat, handleWorkerChat };
+async function translateResponse(text, language) {
+  if (!text || language === 'en-NG') return text;
+  const langName = LANG_NAMES[language] || language;
+  try {
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 500,
+      messages: [{
+        role: 'user',
+        content: `Translate this WhatsApp message into ${langName}. Keep all ₦ amounts, numbers, job titles, organisation names, URLs, emojis, and WhatsApp bold (*text*) exactly as written. Return only the translated text, no explanation.\n\n${text}`,
+      }],
+    });
+    return msg.content.find((b) => b.type === 'text')?.text || text;
+  } catch {
+    return text;
+  }
+}
+
+module.exports = { explainForecast, generatePLRecommendation, handleWhatsAppChat, handleWorkerChat, translateResponse };
